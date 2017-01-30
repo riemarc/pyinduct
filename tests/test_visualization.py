@@ -13,8 +13,8 @@ import pyinduct.visualization as vis
 if any([arg in {'discover', 'setup.py', 'test'} for arg in sys.argv]):
     show_plots = False
 else:
-    # show_plots = True
-    show_plots = False
+    show_plots = True
+    # show_plots = False
 
 app = pg.QtGui.QApplication([])
 
@@ -65,7 +65,7 @@ class PlotTestCase(unittest.TestCase):
         self.assertTrue(os.path.isdir(os.sep.join([os.getcwd(), pt._res_path])))
 
     def test_surface_plot(self):
-        pt = vis.PgSurfacePlot(self.test_data[0])
+        pt = vis.PgSurfacePlot(self.test_data)
         if show_plots:
             app.exec_()
 

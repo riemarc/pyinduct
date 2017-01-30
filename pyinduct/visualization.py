@@ -341,30 +341,20 @@ class PgSurfacePlot(PgDataPlot):
         print(self.scales)
 
         self.plot_items = []
-        if len(data.input_data) == 3:
-            # 2d system over time -> animate
-            # assume that for 4d data, the first axis is the time
-            for idx, data_set in enumerate(self._data):
+        for idx, data_set in enumerate(self._data):
+            if len(data_set.input_data) == 3:
+                # 2d system over time -> animate
+                # assume that for 4d data, the first axis is the time
+                self.index_offset = 1
                 plot_item = gl.GLSurfacePlotItem(
                     x=self.scales[1] * np.atleast_1d(data_set.input_data[1]),
                     y=self.scales[2] * np.flipud(
                         np.atleast_1d(data_set.input_data[2])),
                     z=self.scales[3] * data_set.output_data[0],
                     shader="normalColor")
-
-                # plot_item.translate(-max_0 / 2, -max_1 / 2, -grid_height / 2)
-                self.gl_widget.addItem(plot_item)
-                self.plot_items.append(plot_item)
-
-            self.index_offset = 1
-            self.t_idx = 0
-            self._timer = pg.QtCore.QTimer(self)
-            self._timer.timeout.connect(self._update_plot)
-            self._timer.start(100)
-        else:
-            # 1d system over time -> static
-            self.index_offset = 0
-            for idx, item in enumerate(self._data):
+            else:
+                # 1d system over time -> static
+                self.index_offset = 0
                 plot_item = gl.GLSurfacePlotItem(
                     x=self.scales[0] * np.atleast_1d(
                         self._data[idx].input_data[0]),
@@ -373,9 +363,15 @@ class PgSurfacePlot(PgDataPlot):
                     z=self.scales[2] * self._data[idx].output_data,
                     shader="normalColor")
 
-                # plot_item.translate(-max_0 / 2, -max_1 / 2, -grid_height / 2)
-                self.gl_widget.addItem(plot_item)
-                self.plot_items.append(plot_item)
+            # plot_item.translate(-max_0 / 2, -max_1 / 2, -grid_height / 2)
+            self.gl_widget.addItem(plot_item)
+            self.plot_items.append(plot_item)
+
+        if self.index_offset == 1:
+            self.t_idx = 0
+            self._timer = pg.QtCore.QTimer(self)
+            self._timer.timeout.connect(self._update_plot)
+            self._timer.start(100)
 
         # since gl.GLGridItem.setSize() is broken use gl.GLGridItem.scale()
         self._xygrid = gl.GLGridItem(size=pg.QtGui.QVector3D(self.grid_size,
