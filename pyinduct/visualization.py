@@ -443,7 +443,7 @@ class PgSurfacePlot(PgDataPlot):
 
         self.t_idx += 1
 
-        # TODO check if array has enough timestamps in it
+        # TODO check if every array has enough timestamps in it
         if self.t_idx >= len(self._data[0].input_data[0]):
             self.t_idx = 0
 
