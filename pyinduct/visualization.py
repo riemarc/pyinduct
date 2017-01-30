@@ -300,6 +300,8 @@ class PgSurfacePlot(PgDataPlot):
             Not implemented, yet and therefore defaults to 0 by now.
         title (str): Window title to display.
 
+    Todo:
+        py attention to animation axis.
     Note:
         For animation this object spawns a `QTimer` which needs an running
         event loop. Therefore remember to store a reference to this object.
@@ -319,32 +321,54 @@ class PgSurfacePlot(PgDataPlot):
         self.grid_size = 20
 
         # calculate minima and maxima
-        maxima = np.max(
-            [np.array([max(abs(entry)) for entry in data_set.input_data])
-             for data_set in self._data],
-            axis=0)
-        maxima = np.hstack((maxima,
-                             max([data_set.max for data_set in self._data])))
+        extrema_list = []
+        for data_set in self._data:
+            _extrema_list = []
+            for entry in data_set.input_data:
+                _min_max = [min(entry), max(entry)]
+                _extrema_list.append(_min_max)
+
+            extrema_list.append(_extrema_list)
+
+        extrema_arr = np.array(extrema_list)
+
+        extrema = [np.min(extrema_arr[..., 0], axis=0),
+                   np.max(extrema_arr[..., 1], axis=0)]
+
+        extrema = np.hstack((
+            extrema,
+            ([min([data_set.min for data_set in self._data])],
+             [max([data_set.max for data_set in self._data])])))
+
+        deltas = np.diff(extrema, axis=0).squeeze()
+
+        print("minima: {}".format(extrema[0]))
+        print("maxima: {}".format(extrema[1]))
+        print("deltas: {}".format(deltas))
 
         if scales is None:
             # scale all axes uniformly if no scales are given
             _scales = []
-            for value in maxima:
+            for value in deltas:
                 if np.isclose(value, 0):
                     _scales.append(1)
                 else:
                     _scales.append(1/value)
-            self.scales = tuple(_scales)
+            self.scales = np.array(_scales)
         else:
             self.scales = scales
 
         print(self.scales)
+        sc_deltas = deltas * scales
 
         self.plot_items = []
         for idx, data_set in enumerate(self._data):
             if len(data_set.input_data) == 3:
+                raise NotImplementedError
+
                 # 2d system over time -> animate
                 # assume that for 4d data, the first axis is the time
+                self.scales = np.delete(self.scales, animation_axis)
                 self.index_offset = 1
                 plot_item = gl.GLSurfacePlotItem(
                     x=self.scales[1] * np.atleast_1d(data_set.input_data[1]),
@@ -373,41 +397,38 @@ class PgSurfacePlot(PgDataPlot):
             self._timer.timeout.connect(self._update_plot)
             self._timer.start(100)
 
-        # since gl.GLGridItem.setSize() is broken use gl.GLGridItem.scale()
-        self._xygrid = gl.GLGridItem(size=pg.QtGui.QVector3D(self.grid_size,
-                                                             self.grid_size,
-                                                             1))
-
-        # TODO find new compromise here and ad grids again
-        self._xygrid.scale(x=1/self.grid_size,
-                           y=1/self.grid_size,
-                           z=1)
-        # self._xygrid.translate(0, 0, -maxima[-1]*self.scales[-1]/2)
-        self._xygrid.translate(1, 1, 0)
+        self._xygrid = gl.GLGridItem(size=pg.QtGui.QVector3D(1, 1, 1))
+        self._xygrid.setSpacing(sc_deltas[0]/10, sc_deltas[1]/10, 0)
+        self._xygrid.setSize(1.2 * sc_deltas[0], 1.2 * sc_deltas[1], 1)
+        self._xygrid.translate(
+            .5 * sc_deltas[0],
+            .5 * sc_deltas[1],
+            -.1 * sc_deltas[2]
+        )
         self.gl_widget.addItem(self._xygrid)
 
-        # self._ygrid = gl.GLGridItem()
-        # self._ygrid.scale(x=self.scales[0 + self.index_offset],
-        #                   y=self.scales[1 + self.index_offset],
-        #                   z=self.scales[-1])
-        # self._ygrid.rotate(90, 0, 1, 0)
-        # self._ygrid.translate(0,
-        #                       -maxima[1 + self.index_offset]*
-        #                       self.scales[1 + self.index_offset]/2,
-        #                       0)
-        # self.gl_widget.addItem(self._ygrid)
+        self._xzgrid = gl.GLGridItem(size=pg.QtGui.QVector3D(1, 1, 1))
+        self._xzgrid.setSpacing(sc_deltas[0]/10, sc_deltas[2]/10, 0)
+        self._xzgrid.setSize(1.2 * sc_deltas[0], 1.2 * sc_deltas[2], 1)
+        self._xzgrid.rotate(90, 1, 0, 0)
+        self._xzgrid.translate(
+            .5 * sc_deltas[0],
+            1.1 * sc_deltas[1],
+            .5 * sc_deltas[2]
+        )
+        self.gl_widget.addItem(self._xzgrid)
 
-        # self._ygrid = gl.GLGridItem()
-        # self._ygrid.scale(x=grid_height_s, y=max_1_s, z=0)
-        # self._ygrid.rotate(90, 0, 1, 0)
-        # self._ygrid.translate(max_0 / 2, 0, 0)
-        # self.gl_widget.addItem(self._ygrid)
-        #
-        # self._zgrid = gl.GLGridItem()
-        # self._zgrid.scale(x=max_0_s, y=grid_height_s, z=max_1)
-        # self._zgrid.rotate(90, 1, 0, 0)
-        # self._zgrid.translate(0, max_1 / 2, 0)
-        # self.gl_widget.addItem(self._zgrid)
+        self._yzgrid = gl.GLGridItem(size=pg.QtGui.QVector3D(1, 1, 1))
+        self._yzgrid.setSpacing(sc_deltas[1]/10, sc_deltas[2]/10, 0)
+        self._yzgrid.setSize(1.2 * sc_deltas[1], 1.2 * sc_deltas[2], 1)
+        self._yzgrid.rotate(90, 1, 0, 0)
+        self._yzgrid.rotate(90, 0, 0, 1)
+        self._yzgrid.translate(
+            1.1 * sc_deltas[0],
+            .5 * sc_deltas[1],
+            .5 * sc_deltas[2]
+        )
+        self.gl_widget.addItem(self._yzgrid)
 
     def _update_plot(self):
         """

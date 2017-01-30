@@ -65,7 +65,9 @@ class PlotTestCase(unittest.TestCase):
         self.assertTrue(os.path.isdir(os.sep.join([os.getcwd(), pt._res_path])))
 
     def test_surface_plot(self):
-        pt = vis.PgSurfacePlot(self.test_data)
+        pt = vis.PgSurfacePlot(self.test_data,
+                               scales=(.1, 1, .1)
+                               )
         if show_plots:
             app.exec_()
 
