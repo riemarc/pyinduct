@@ -1,3 +1,6 @@
+import core
+import hyperbolic.feedforward
+import parabolic.control
 import pyinduct.trajectory as tr
 import pyinduct.core as cr
 import pyinduct.shapefunctions as sh
@@ -55,12 +58,12 @@ def build_control_law(approx_label, params):
                        ph.IntegralTerm(ph.Product(ph.ScalarFunction("int_scale4"), dz_x1), limits=limits, scale=-1),
                        ph.IntegralTerm(ph.Product(ph.ScalarFunction("int_scale4"), x2), limits=limits)]
 
-    return ct.ControlLaw(ut.scale_equation_term_list(
+    return ct.ControlLaw(parabolic.control.scale_equation_term_list(
         [ph.ScalarTerm(x2(1), scale=-(1 - params.alpha))] +
-        ut.scale_equation_term_list(dz_y_bar_plus1, factor=(1 - params.m * params.k1)) +
-        ut.scale_equation_term_list(dz_y_bar_minus1, factor=-params.alpha * (1 + params.m * params.k1)) +
-        ut.scale_equation_term_list(y_bar_plus1, factor=-params.m * params.k0) +
-        ut.scale_equation_term_list(y_bar_minus1, factor=-params.alpha * params.m * params.k0),
+        parabolic.control.scale_equation_term_list(dz_y_bar_plus1, factor=(1 - params.m * params.k1)) +
+        parabolic.control.scale_equation_term_list(dz_y_bar_minus1, factor=-params.alpha * (1 + params.m * params.k1)) +
+        parabolic.control.scale_equation_term_list(y_bar_plus1, factor=-params.m * params.k0) +
+        parabolic.control.scale_equation_term_list(y_bar_minus1, factor=-params.alpha * params.m * params.k0),
         factor=(1 + params.alpha) ** -1
     ))
 
@@ -95,11 +98,11 @@ app = QtGui.QApplication([])
 t_start = 0
 t_end = 10
 t_step = .01
-temp_domain = sim.Domain(bounds=(t_start, t_end), step=t_step)
+temp_domain = core.Domain(bounds=(t_start, t_end), step=t_step)
 z_start = 0
 z_end = 1
 z_step = .01
-spat_domain = sim.Domain(bounds=(z_start, z_end), step=z_step)
+spat_domain = core.Domain(bounds=(z_start, z_end), step=z_step)
 
 # system/simulation parameters
 params = Parameters
@@ -139,7 +142,7 @@ if 1:
     u = sim.SimulationInputSum([closed_loop_traj, ctrl])
 else:
     # trajectory for the original input (open_loop_traj)
-    open_loop_traj = tr.FlatString(y0=x_zt(0, 0), y1=1, z0=z_start, z1=z_end, t0=1, dt=3, params=params)
+    open_loop_traj = hyperbolic.feedforward.FlatString(y0=x_zt(0, 0), y1=1, z0=z_start, z1=z_end, t0=1, dt=3, params=params)
     u = sim.SimulationInputSum([open_loop_traj])
 
 # weak formulation

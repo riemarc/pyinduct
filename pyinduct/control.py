@@ -3,44 +3,14 @@ This module contains all classes and functions related to the approximation of d
 as well as their implementation for simulation purposes.
 """
 
-from itertools import chain
 import numpy as np
+from itertools import chain
 
+from .core import real, get_weight_transformation, TransformationInfo
 from .registry import get_base
-from .core import domain_intersection, integrate_function, \
-    TransformationInfo, get_weight_transformation
-from .placeholder import EquationTerm, ScalarTerm, IntegralTerm, Scalars, FieldVariable, get_common_target
-from .simulation import SimulationInput, CanonicalForms
+from .simulation import SimulationInput, parse_weak_formulation
 
-
-class ControlLaw(object):
-    """
-    This class represents the approximated formulation of a control law.
-    It can be initialized with several terms (see children of :py:class:`pyinduct.placeholder.EquationTerm`).
-    The equation is interpreted as
-
-    .. math::
-        term_0 + term_1 + ... + term_N = u
-
-    where :math:`u` is the control output.
-
-    Args:
-        terms (list): List with object(s) of type :py:class:`pyinduct.placeholder.EquationTerm`.
-    """
-
-    def __init__(self, terms, name=""):
-        if isinstance(terms, EquationTerm):
-            terms = [terms]
-        if not isinstance(terms, list):
-            raise TypeError("only (list of) {0} allowed".format(EquationTerm))
-
-        for term in terms:
-            if not isinstance(term, EquationTerm):
-                raise TypeError("Only EquationTerm(s) are accepted.")
-
-        self.terms = terms
-        self.name = name
-
+__all__ = ["Controller", "LawEvaluator"]
 
 class Controller(SimulationInput):
     """
@@ -53,8 +23,8 @@ class Controller(SimulationInput):
 
     def __init__(self, control_law):
         SimulationInput.__init__(self, name=control_law.name)
-        c_forms = approximate_control_law(control_law)
-        self._evaluator = LawEvaluator(c_forms, self._value_storage)
+        ce = parse_weak_formulation(control_law, finalize=False)
+        self._evaluator = LawEvaluator(ce, self._value_storage)
 
     def _calc_output(self, **kwargs):
         """
@@ -70,91 +40,13 @@ class Controller(SimulationInput):
         return self._evaluator(kwargs["weights"], kwargs["weight_lbl"])
 
 
-def approximate_control_law(control_law):
-    """
-    Function that approximates the control law, given by a list of sum terms that equal u.
-    The result is a function handle that contains pre-evaluated terms and only needs the current weights (and their
-    respective label) to be applied.
-
-    Args:
-        control_law (:py:class:`ControlLaw`): Function handle that calculates the control output if provided with
-            correct weights.
-    Return:
-        :py:class:`pyinduct.simulation.CanonicalForms`: evaluation handle
-    """
-    print("approximating control law {}".format(control_law.name))
-    if not isinstance(control_law, ControlLaw):
-        raise TypeError("only input of Type ControlLaw allowed!")
-
-    return _parse_control_law(control_law)
-
-
-def _parse_control_law(law):
-    """
-    Parses the given control law by approximating given terms.
-
-    Args:
-        law (list):  List of :py:class:`pyinduct.placeholders.EquationTerm`'s
-
-    Return:
-        :py:class:`pyinduct.simulation.CanonicalForms`: evaluation handle
-    """
-
-    # check terms
-    for term in law.terms:
-        if not isinstance(term, EquationTerm):
-            raise TypeError("only EquationTerm(s) accepted.")
-
-    cfs = CanonicalForms(law.name)
-
-    for term in law.terms:
-        placeholders = dict([
-            ("field_variables", term.arg.get_arg_by_class(FieldVariable)),
-            ("scalars", term.arg.get_arg_by_class(Scalars)),
-        ])
-        if placeholders["field_variables"]:
-            field_var = placeholders["field_variables"][0]
-            temp_order = field_var.order[0]
-            func_lbl = field_var.data["func_lbl"]
-            weight_lbl = field_var.data["weight_lbl"]
-            init_funcs = get_base(func_lbl, field_var.order[1])
-
-            factors = np.atleast_2d([integrate_function(func, domain_intersection(term.limits, func.nonzero))[0]
-                                     for func in init_funcs])
-
-            if placeholders["scalars"]:
-                scales = placeholders["scalars"][0]
-                res = np.prod(np.array([factors, scales]), axis=0)
-            else:
-                res = factors
-
-            # HACK! hardcoded exponent
-            cfs.add_to(weight_lbl, dict(name="E", order=temp_order, exponent=1), res * term.scale)
-
-        elif placeholders["scalars"]:
-            # TODO make sure that all have the same target form!
-            scalars = placeholders["scalars"]
-            if len(scalars) > 1:
-                # TODO if one of 'em is just a scalar and no array an error occurs
-                res = np.prod(np.array([scalars[0].data, scalars[1].data]), axis=0)
-            else:
-                res = scalars[0].data
-
-            cfs.add_to(scalars[0].target_form, get_common_target(scalars), res * term.scale)
-
-        else:
-            raise NotImplementedError
-
-    return cfs
-
-
 class LawEvaluator(object):
     """
-    Object that evaluates the control law approximation given by a :py:class:`pyinduct.simulation.CanonicalForms`
+    Object that evaluates the control law approximation given by a :py:class:`pyinduct.simulation.CanonicalEquations`
     object.
 
     Args:
-        cfs (:py:class:`pyinduct.simulation.CanonicalForms`): evaluation handle
+        cfs (:py:class:`pyinduct.simulation.CanonicalEquation`): evaluation handle
     """
 
     def __init__(self, cfs, storage=None):
@@ -180,7 +72,8 @@ class LawEvaluator(object):
 
         vectors = {}
         for power in powers:
-            vector = np.hstack([terms["E"].get(order, {}).get(1, np.zeros(dim)) for order in range(max(orders) + 1)])
+            vector = np.hstack([terms["E"].get(order, {}).get(power, np.zeros(dim))[0, :]
+                                for order in range(max(orders) + 1)])
             vectors.update({power: vector})
 
         return vectors
@@ -202,7 +95,7 @@ class LawEvaluator(object):
         # add dynamic part
         for lbl, law in self._cfs.get_dynamic_terms().items():
             dst_weights = [0]
-            if "E" in law is not None:
+            if "E" in law:
                 # build eval vector
                 if lbl not in self._eval_vectors.keys():
                     self._eval_vectors[lbl] = self._build_eval_vector(law)
@@ -211,10 +104,11 @@ class LawEvaluator(object):
                 info = TransformationInfo()
                 info.src_lbl = weight_label
                 info.dst_lbl = lbl
-                info.src_base = get_base(weight_label, 0)
-                info.dst_base = get_base(lbl, 0)
-                info.src_order = int(weights.size / info.src_base.size) - 1
-                info.dst_order = int(next(iter(self._eval_vectors[lbl].values())).size / info.dst_base.size) - 1
+                info.src_base = get_base(weight_label)
+                info.dst_base = get_base(lbl)
+                info.src_order = int(weights.size / info.src_base.fractions.size) - 1
+                info.dst_order = int(next(iter(self._eval_vectors[lbl].values())).size
+                                     / info.dst_base.fractions.size) - 1
 
                 # look up transformation
                 if info not in self._transformations.keys():
@@ -228,7 +122,7 @@ class LawEvaluator(object):
                 # evaluate
                 vectors = self._eval_vectors[lbl]
                 for p, vec in vectors.items():
-                    output = output + np.dot(vec, np.power(dst_weights, p))
+                    output += np.dot(vec, np.power(dst_weights, p))
 
             res[lbl] = dst_weights
 
@@ -237,14 +131,5 @@ class LawEvaluator(object):
         if "f" in static_terms:
             output = output + static_terms["f"]
 
-        # TODO: replace with the one from utils
-        if abs(np.imag(output)) > np.finfo(np.complex128).eps * 100:
-            print("Warning: Imaginary part of output is nonzero! out = {0}".format(output))
-
-        out = np.real_if_close(output, tol=10000000)
-        if np.imag(out) != 0:
-            raise ValueError("calculated complex control output u={0},"
-                             " check for errors in control law!".format(out))
-
-        res["output"] = out
+        res["output"] = real(output)
         return res

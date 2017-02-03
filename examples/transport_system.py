@@ -1,3 +1,4 @@
+import core
 import pyinduct.core as cr
 import pyinduct.placeholder as ph
 import pyinduct.registry as reg
@@ -12,8 +13,8 @@ sys_name = 'transport system'
 v = 10
 l = 5
 T = 5
-spat_domain = sim.Domain(bounds=(0, l), num=51)
-temp_domain = sim.Domain(bounds=(0, T), num=1e2)
+spat_domain = core.Domain(bounds=(0, l), num=51)
+temp_domain = core.Domain(bounds=(0, T), num=1e2)
 
 init_x = cr.Function(lambda z: 0)
 
@@ -46,8 +47,7 @@ win0 = pg.plot(np.array(eval_data[0].input_data[0]), u.get_results(eval_data[0].
                labels=dict(left='u(t)', bottom='t'), pen='b')
 win0.showGrid(x=False, y=True, alpha=0.5)
 vis.save_2d_pg_plot(win0, 'transport_system')
-win1 = vis.PgAnimatedPlot(eval_data, title=eval_data[0].name,
-                          save_pics=True, labels=dict(left='x(z,t)', bottom='z'))
+win1 = vis.PgAnimatedPlot(eval_data, title=eval_data[0].name, save_pics=False, labels=dict(left='x(z,t)', bottom='z'))
 pg.QtGui.QApplication.instance().exec_()
 
 
