@@ -26,7 +26,7 @@ from .placeholder import (Scalars, TestFunction, Input, FieldVariable,
 from .registry import get_base, register_base
 
 __all__ = ["SimulationInput", "SimulationInputSum", "WeakFormulation",
-           "parse_weak_formulation",
+           "SimulationInputVector", "parse_weak_formulation",
            "create_state_space", "StateSpace", "simulate_state_space",
            "simulate_system", "simulate_systems",
            "get_sim_result", "evaluate_approximation",
@@ -139,6 +139,28 @@ class EmptyInput(SimulationInput):
 
     def _calc_output(self, **kwargs):
         return dict(output=np.zeros(self.dim))
+
+
+class SimulationInputVector(SimulationInput):
+    """
+    A simulation input which return a column vector as output.
+
+    input_vector (array-like): List of :py:class:`SimulationInput` instances.
+    """
+
+    def __init__(self, input_vector):
+        SimulationInput.__init__(self)
+        self._input_vector = list(input_vector)
+
+    def append(self, input_vector):
+        [self._input_vector.append(input) for input in input_vector]
+
+    def _calc_output(self, **kwargs):
+        output = list()
+        for input in self._input_vector:
+            output.append(input(**kwargs))
+
+        return dict(output=np.hstack(output))
 
 
 class SimulationInputSum(SimulationInput):
