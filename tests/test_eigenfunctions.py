@@ -1,15 +1,10 @@
-import sys
 import unittest
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pyinduct as pi
 import pyinduct.parabolic as parabolic
-
-if any([arg in {'discover', 'setup.py', 'test'} for arg in sys.argv]):
-    show_plots = False
-else:
-    show_plots = True
+from tests import show_plots
 
 if show_plots:
     import pyqtgraph as pg
@@ -364,7 +359,7 @@ class TestEigenvalues(unittest.TestCase):
 
         for param, desired_eig_freq in param_desired_ef_pairs:
             eig_freq, _ = pi.SecondOrderRobinEigenfunction.eigfreq_eigval_hint(
-                param, 1, 4, show_plot=True)
+                param, 1, 4, show_plot=False)
             self.assertTrue(all(np.isclose(eig_freq, desired_eig_freq)))
 
 

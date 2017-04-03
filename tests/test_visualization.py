@@ -1,20 +1,12 @@
 import os
-import sys
 import unittest
 from pickle import loads
 
 import matplotlib.pyplot as plt
 import pyqtgraph as pg
-
 import pyinduct as pi
 import pyinduct.visualization as vis
-
-# TODO: __init__ global variable show_plots
-if any([arg in {'discover', 'setup.py', 'test'} for arg in sys.argv]):
-    show_plots = False
-else:
-    show_plots = True
-    # show_plots = False
+from tests import show_plots
 
 app = pg.QtGui.QApplication([])
 
@@ -65,9 +57,7 @@ class PlotTestCase(unittest.TestCase):
         self.assertTrue(os.path.isdir(os.sep.join([os.getcwd(), pt._res_path])))
 
     def test_surface_plot(self):
-        pt = vis.PgSurfacePlot(self.test_data,
-                               scales=(.1, 1, .1)
-                               )
+        pt = vis.PgSurfacePlot(self.test_data[0])
         if show_plots:
             app.exec_()
 
