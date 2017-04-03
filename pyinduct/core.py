@@ -344,6 +344,9 @@ class Function(BaseFraction):
             # derivatives are lost
             new_obj.derivative_handles = None
             new_obj.function_handle = scale_factory(self._function_handle)
+            if isinstance(factor, BaseFraction):
+                new_obj.nonzero = domain_intersection(self.nonzero,
+                                                      factor.nonzero)
         else:
             # derivatives can be scaled
             new_obj.derivative_handles = [scale_factory(der_handle) for der_handle in self.derivative_handles]
@@ -752,13 +755,14 @@ def domain_intersection(first, second):
     return intersection
 
 
-def _dot_product_l2(first, second):
+def _dot_product_l2(first, second, limits):
     """
     Calculates the inner product of two functions.
 
     Args:
         first (:py:class:`pyinduct.core.Function`): first function
         second (:py:class:`pyinduct.core.Function`): second function
+        limits (list of tuples): Limits to *einhalten*
 
     Todo:
         rename to scalar_dot_product and make therefore non private
@@ -770,7 +774,7 @@ def _dot_product_l2(first, second):
     if not isinstance(first, Function) or not isinstance(second, Function):
         raise TypeError("Wrong type(s) supplied. both must be a {0}".format(Function))
 
-    limits = domain_intersection(first.domain, second.domain)
+    # TODO check nach intergarte function auslagern
     nonzero = domain_intersection(first.nonzero, second.nonzero)
     areas = domain_intersection(limits, nonzero)
 
@@ -810,6 +814,8 @@ def integrate_function(function, interval):
             integration).
 
     """
+    # todo domain prüfen und segmentieren
+
     result = 0
     err = 0
     for area in interval:

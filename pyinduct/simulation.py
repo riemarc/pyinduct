@@ -922,9 +922,11 @@ def parse_weak_formulation(weak_form, finalize=True):
                     raise NotImplementedError
                 func = placeholders["functions"][0]
                 test_funcs = get_base(func.data["func_lbl"]).derive(func.order[1])
+                # TODO limits beachten
                 result = calculate_scalar_product_matrix(dot_product_l2, test_funcs, shape_funcs)
             else:
                 # extract constant term and compute integral
+                # TODO limits beachten
                 a = Scalars(np.atleast_2d([integrate_function(func, func.nonzero)[0]
                                            for func in shape_funcs.fractions]))
 
@@ -957,6 +959,7 @@ def parse_weak_formulation(weak_form, finalize=True):
 
             if placeholders["scalars"]:
                 a = placeholders["scalars"][0]
+                # TODO limits beachten
                 b = Scalars(np.vstack([integrate_function(func, func.nonzero)[0] for func in test_funcs]))
                 result = _compute_product_of_scalars([a, b])
 
@@ -975,7 +978,10 @@ def parse_weak_formulation(weak_form, finalize=True):
                 input_order = input_var.order[0]
                 term_info = dict(name="G", order=input_order, exponent=input_exp)
 
-                result = np.array([[integrate_function(func, func.nonzero)[0]] for func in test_funcs])
+                # TODO limits beachten
+                one_func = get_base("ONE_FUNC").fractions
+                result = np.array([[dot_product_l2(func, one_func, limits)]]
+                                  for func in test_funcs])
 
                 ce.add_to(weight_label=None, term=term_info, val=result * term.scale, column=input_index)
                 ce.input_function = input_func

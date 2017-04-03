@@ -181,7 +181,17 @@ class ParseTest(unittest.TestCase):
         self.input_squared = pi.Input(self.u, exponent=2)
 
         # scale function
-        pi.register_base("heavyside", pi.Base(pi.Function(lambda z: 0 if z < 0.5 else (0.5 if z == 0.5 else 1))))
+        #pi.register_base("heavyside", pi.Base(pi.Function(lambda z: 0 if z < 0.5 else (0.5 if z == 0.5 else 1))))
+
+        def heavyside(z):
+            if z < .5:
+                return 0
+            elif z == 0.5:
+                return 0.5
+            else:
+                return 1
+
+        pi.register_base("heavyside", pi.Base(pi.Function(heavyside)))
 
         nodes, self.test_base = pi.cure_interval(pi.LagrangeFirstOrder, (0, 1),
                                                  node_count=3)
@@ -224,6 +234,8 @@ class ParseTest(unittest.TestCase):
         self.input_term3_swapped = pi.IntegralTerm(pi.Product(self.input, self.phi), (0, 1))
         self.input_term3_scaled = pi.IntegralTerm(
             pi.Product(pi.Product(pi.ScalarFunction("heavyside"), self.phi), self.input), (0, 1))
+        self.input_term3_scaled_half_domain = pi.IntegralTerm(
+            pi.Product(pi.Product(pi.ScalarFunction("heavyside"), self.phi), self.input), (0, .5))
 
         # same goes for field variables
         self.field_term_at1 = pi.ScalarTerm(self.field_var_at1)
@@ -293,6 +305,11 @@ class ParseTest(unittest.TestCase):
         terms = sim.parse_weak_formulation(
             sim.WeakFormulation(self.input_term3_scaled, name="test"), finalize=False).get_static_terms()
         self.assertTrue(np.allclose(terms["G"][0][1], np.array([[.0], [.25], [.25]])))
+
+        terms = sim.parse_weak_formulation(
+            sim.WeakFormulation(self.input_term3_scaled_half_domain, name="test"), finalize=False).get_static_terms()
+        np.testing.assert_array_almost_equal(terms["G"][0][1], np.array([[.0], [.0], [.0]]) )
+
 
     def test_TestFunction_term(self):
         terms = sim.parse_weak_formulation(
