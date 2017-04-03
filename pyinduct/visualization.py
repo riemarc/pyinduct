@@ -359,7 +359,7 @@ class PgSurfacePlot(PgDataPlot):
             self.scales = scales
 
         print(self.scales)
-        sc_deltas = deltas * scales
+        sc_deltas = deltas * self.scales
 
         self.plot_items = []
         for idx, data_set in enumerate(self._data):
