@@ -342,9 +342,9 @@ class PgSurfacePlot(PgDataPlot):
 
         deltas = np.diff(extrema, axis=0).squeeze()
 
-        print("minima: {}".format(extrema[0]))
-        print("maxima: {}".format(extrema[1]))
-        print("deltas: {}".format(deltas))
+        # print("minima: {}".format(extrema[0]))
+        # print("maxima: {}".format(extrema[1]))
+        # print("deltas: {}".format(deltas))
 
         if scales is None:
             # scale all axes uniformly if no scales are given
@@ -358,7 +358,7 @@ class PgSurfacePlot(PgDataPlot):
         else:
             self.scales = scales
 
-        print(self.scales)
+        # print(self.scales)
         sc_deltas = deltas * self.scales
 
         self.plot_items = []
