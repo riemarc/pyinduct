@@ -2021,6 +2021,18 @@ class EvalData:
 
         return self.interpolate(_pl)
 
+        # sanitize_input(pos, collections.Iterable)
+        # assert len(pos) == len(self.input_data)
+        #
+        # _pos = list(pos)
+        # for i, p in enumerate(pos):
+        #     if isinstance(p, slice):
+        #         _pos[i] = self.input_data[i][p]
+        #     sanitize_input(_pos[i], numbers.Number)
+        #
+        # return self.interpolate(_pos)
+
+
     def interpolate(self, pos):
         assert isinstance(pos, list)
         assert len(pos) == len(self.input_data)
