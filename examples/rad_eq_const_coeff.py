@@ -48,8 +48,9 @@ n = n_modal
 
 # create (not normalized) eigenfunctions
 eig_freq, eig_val = parabolic.compute_rad_robin_eigenfrequencies(param, l, n)
-init_eig_funcs = pi.Base([pi.SecondOrderRobinEigenfunction(om, param, spatial_domain.bounds) for om in eig_freq])
-init_adjoint_eig_funcs = pi.Base([pi.SecondOrderRobinEigenfunction(om, adjoint_param, spatial_domain.bounds)
+init_eig_funcs = pi.Base([pi.SecondOrderRobinEigenfunction(om, param, spatial_domain.bounds[-1])
+                          for om in eig_freq])
+init_adjoint_eig_funcs = pi.Base([pi.SecondOrderRobinEigenfunction(om, adjoint_param, spatial_domain.bounds[-1])
                                   for om in eig_freq])
 
 # normalize eigenfunctions and adjoint eigenfunctions
@@ -58,7 +59,7 @@ eig_funcs, adjoint_eig_funcs = pi.normalize_base(init_eig_funcs, init_adjoint_ei
 # eigenfunctions from target system ("_t")
 eig_freq_t = np.sqrt(-a1_t ** 2 / 4 / a2 ** 2 + (a0_t - eig_val) / a2)
 eig_funcs_t = pi.Base(
-    [pi.SecondOrderRobinEigenfunction(eig_freq_t[idx], param_t, spatial_domain.bounds).scale(func(0))
+    [pi.SecondOrderRobinEigenfunction(eig_freq_t[idx], param_t, spatial_domain.bounds[-1]).scale(func(0))
      for idx, func in enumerate(eig_funcs.fractions)])
 
 # create fem test functions
@@ -75,9 +76,11 @@ pi.register_base("fem_funcs", fem_funcs)
 # original () and target (_t) field variable
 fem_field_variable = pi.FieldVariable("fem_funcs", location=l)
 field_variable = pi.FieldVariable("eig_funcs", location=l)
-d_field_variable = pi.SpatialDerivedFieldVariable("eig_funcs", 1, location=l)
+d_field_variable = field_variable.derive(spat_order=1)
+# d_field_variable = pi.SpatialDerivedFieldVariable("eig_funcs", 1, location=l)
 field_variable_t = pi.FieldVariable("eig_funcs_t", weight_label="eig_funcs", location=l)
-d_field_variable_t = pi.SpatialDerivedFieldVariable("eig_funcs_t", 1, weight_label="eig_funcs", location=l)
+d_field_variable_t = field_variable_t.derive(spat_order=1)
+# d_field_variable_t = pi.SpatialDerivedFieldVariable("eig_funcs_t", 1, weight_label="eig_funcs", location=l)
 
 
 def transform_i(z):
@@ -140,7 +143,7 @@ for lbl in base_labels:
     pi.deregister_base(lbl)
 
 # evaluate desired output data
-y_d, t_d = pi.gevrey_tanh(T, 80)
+y_d, t_d = pi.gevrey_tanh(T, 20)
 C = pi.coefficient_recursion(y_d, alpha * y_d, param)
 x_l = pi.power_series(np.array(spatial_domain), t_d, C)
 evald_traj = pi.EvalData([t_d, spatial_domain], x_l, name="x(z,t) desired")
@@ -148,8 +151,8 @@ evald_traj = pi.EvalData([t_d, spatial_domain], x_l, name="x(z,t) desired")
 # pyqtgraph visualization
 eval_d = pi.evaluate_approximation("fem_funcs", q, t, spatial_domain, name="x(z,t) with x(z,0)=" + str(init_profile))
 win1 = pi.PgAnimatedPlot([eval_d, evald_traj], title="animation", replay_gain=1)
-win2 = pi.PgSurfacePlot([eval_d], title=eval_d.name, grid_height=1)
-win3 = pi.PgSurfacePlot([evald_traj], title=evald_traj.name, grid_height=1)
+win2 = pi.PgSurfacePlot([eval_d], title=eval_d.name)
+win3 = pi.PgSurfacePlot([evald_traj], title=evald_traj.name)
 pg.QtGui.QApplication.instance().exec_()
 
 # matplotlib visualization
