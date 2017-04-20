@@ -1,8 +1,8 @@
-import matplotlib.pyplot as plt
 import numpy as np
 import pyinduct as pi
 import pyinduct.parabolic as parabolic
 import pyqtgraph as pg
+
 
 # PARAMETERS TO VARY
 # number of eigenfunctions, used for control law approximation
@@ -12,7 +12,17 @@ n_fem = 30
 # control law parameter, stabilizing: param_a0_t < 0, destabilizing: param_a0_t > 0
 param_a0_t = -6
 # initial profile x(z,0) (desired x(z,0)=0)
-init_profile = 0.2
+def init_profile(z):
+    return .2
+
+# system/simulation parameters
+l = 1
+T = 1
+actuation_type = 'robin'
+bound_cond_type = 'robin'
+spatial_domain = pi.Domain(bounds=(0, l), num=n_fem)
+temporal_domain = pi.Domain(bounds=(0, 1), num=100)
+n = n_modal
 
 # original system parameter
 a2 = .5
@@ -36,15 +46,6 @@ _, _, a0_i, alpha_i, beta_i = parabolic.eliminate_advection_term(param)
 param_i = a2, 0, a0_i, alpha_i, beta_i
 _, _, a0_ti, alpha_ti, beta_ti = parabolic.eliminate_advection_term(param_t)
 param_ti = a2, 0, a0_ti, alpha_ti, beta_ti
-
-# system/simulation parameters
-l = 1
-T = 1
-actuation_type = 'robin'
-bound_cond_type = 'robin'
-spatial_domain = pi.Domain(bounds=(0, l), num=n_fem)
-temporal_domain = pi.Domain(bounds=(0, 1), num=100)
-n = n_modal
 
 # create (not normalized) eigenfunctions
 eig_freq, eig_val = parabolic.compute_rad_robin_eigenfrequencies(param, l, n)
@@ -76,11 +77,7 @@ pi.register_base("fem_funcs", fem_funcs)
 # original () and target (_t) field variable
 fem_field_variable = pi.FieldVariable("fem_funcs", location=l)
 field_variable = pi.FieldVariable("eig_funcs", location=l)
-d_field_variable = field_variable.derive(spat_order=1)
-# d_field_variable = pi.SpatialDerivedFieldVariable("eig_funcs", 1, location=l)
 field_variable_t = pi.FieldVariable("eig_funcs_t", weight_label="eig_funcs", location=l)
-d_field_variable_t = field_variable_t.derive(spat_order=1)
-# d_field_variable_t = pi.SpatialDerivedFieldVariable("eig_funcs_t", 1, weight_label="eig_funcs", location=l)
 
 
 def transform_i(z):
@@ -100,10 +97,10 @@ def transform_ti(z):
 # intermediate (_i) and target intermediate (_ti) field variable (list of scalar terms = sum of scalar terms)
 x_fem_i_at_l = [pi.ScalarTerm(fem_field_variable, transform_i(l))]
 x_i_at_l = [pi.ScalarTerm(field_variable, transform_i(l))]
-xd_i_at_l = [pi.ScalarTerm(d_field_variable, transform_i(l)),
+xd_i_at_l = [pi.ScalarTerm(field_variable.derive(spat_order=1), transform_i(l)),
              pi.ScalarTerm(field_variable, transform_i(l) * a1 / 2 / a2)]
 x_ti_at_l = [pi.ScalarTerm(field_variable_t, transform_ti(l))]
-xd_ti_at_l = [pi.ScalarTerm(d_field_variable_t, transform_ti(l)),
+xd_ti_at_l = [pi.ScalarTerm(field_variable_t.derive(spat_order=1), transform_ti(l)),
               pi.ScalarTerm(field_variable_t, transform_ti(l) * a1_t / 2 / a2)]
 
 
@@ -132,11 +129,18 @@ system_input = pi.SimulationInputSum([trajectory, controller])
 # determine (A,B)
 rad_pde, base_labels = parabolic.get_parabolic_robin_weak_form("fem_funcs", "fem_funcs", controller, param,
                                                                spatial_domain.bounds)
-ce = pi.parse_weak_formulation(rad_pde)
-ss_weak = pi.create_state_space(ce)
 
-# simulate
-t, q = pi.simulate_state_space(ss_weak, init_profile * np.ones(n_fem), temporal_domain)
+eval_d = pi.simulate_system(
+    rad_pde,
+    initial_states=pi.Function(init_profile),
+    temporal_domain=temporal_domain,
+    spatial_domain=spatial_domain)[0]
+
+# ce = pi.parse_weak_formulation(rad_pde)
+# ss_weak = pi.create_state_space(ce)
+#
+# # simulate
+# t, q = pi.simulate_state_space(ss_weak, init_profile(0) * np.ones(n_fem), temporal_domain)
 
 # deregister created bases
 for lbl in base_labels:
@@ -148,13 +152,24 @@ C = pi.coefficient_recursion(y_d, alpha * y_d, param)
 x_l = pi.power_series(np.array(spatial_domain), t_d, C)
 evald_traj = pi.EvalData([t_d, spatial_domain], x_l, name="x(z,t) desired")
 
+plots = list()
 # pyqtgraph visualization
-eval_d = pi.evaluate_approximation("fem_funcs", q, t, spatial_domain, name="x(z,t) with x(z,0)=" + str(init_profile))
-win1 = pi.PgAnimatedPlot([eval_d, evald_traj], title="animation", replay_gain=1)
-win2 = pi.PgSurfacePlot([eval_d], title=eval_d.name)
-win3 = pi.PgSurfacePlot([evald_traj], title=evald_traj.name)
-pg.QtGui.QApplication.instance().exec_()
-
+plots.append(pi.PgAnimatedPlot(
+    [eval_d, evald_traj], title="animation", replay_gain=1))
+plots.append(pi.PgSurfacePlot(eval_d, title=eval_d.name))
+plots.append(pi.PgSurfacePlot(evald_traj, title=evald_traj.name))
 # matplotlib visualization
-pi.MplSlicePlot([evald_traj, eval_d], spatial_point=0, legend_label=["$x_d(0,t)$", "$x(0,t)$"])
-plt.show()
+plots.append(pi.MplSlicePlot([evald_traj, eval_d], spatial_point=0,
+                             legend_label=["$x_d(0,t)$", "$x(0,t)$"]))
+
+pg.QAPP.exec_()
+
+# pi.show()
+#
+# pi.tear_down(("eig_funcs",
+#               "adjoint_eig_funcs",
+#               "eig_funcs_t",
+#               "fem_funcs") + base_labels,
+#              plots)
+
+
