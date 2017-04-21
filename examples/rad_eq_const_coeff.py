@@ -2,6 +2,7 @@ import numpy as np
 import pyinduct as pi
 import pyinduct.parabolic as parabolic
 import pyqtgraph as pg
+import matplotlib.pyplot as plt
 
 
 # PARAMETERS TO VARY
@@ -31,7 +32,7 @@ a0 = 6
 alpha = -1
 beta = -1
 param = [a2, a1, a0, alpha, beta]
-adjoint_param = parabolic.general.get_adjoint_rad_evp_param(param)
+adjoint_param = pi.SecondOrderEigenfunction.get_adjoint_problem(param)
 
 # target system parameters (controller parameters)
 a1_t = 0
@@ -42,26 +43,21 @@ beta_t = 3
 param_t = [a2, a1_t, a0_t, alpha_t, beta_t]
 
 # original intermediate ("_i") and target intermediate ("_ti") system parameters
-_, _, a0_i, alpha_i, beta_i = parabolic.eliminate_advection_term(param)
+_, _, a0_i, alpha_i, beta_i = parabolic.eliminate_advection_term(param, l)
 param_i = a2, 0, a0_i, alpha_i, beta_i
-_, _, a0_ti, alpha_ti, beta_ti = parabolic.eliminate_advection_term(param_t)
+_, _, a0_ti, alpha_ti, beta_ti = parabolic.eliminate_advection_term(param_t, l)
 param_ti = a2, 0, a0_ti, alpha_ti, beta_ti
 
 # create (not normalized) eigenfunctions
-eig_freq, eig_val = parabolic.compute_rad_robin_eigenfrequencies(param, l, n)
-init_eig_funcs = pi.Base([pi.SecondOrderRobinEigenfunction(om, param, spatial_domain.bounds[-1])
-                          for om in eig_freq])
-init_adjoint_eig_funcs = pi.Base([pi.SecondOrderRobinEigenfunction(om, adjoint_param, spatial_domain.bounds[-1])
-                                  for om in eig_freq])
+eig_val, init_eig_funcs = pi.SecondOrderRobinEigenfunction.solve_evp_hint(param, l, n=n)
+_, init_adjoint_eig_funcs = pi.SecondOrderRobinEigenfunction.solve_evp_hint(adjoint_param, l, eig_val=eig_val)
 
 # normalize eigenfunctions and adjoint eigenfunctions
-eig_funcs, adjoint_eig_funcs = pi.normalize_base(init_eig_funcs, init_adjoint_eig_funcs)
+eig_funcs, adjoint_eig_funcs = pi.normalize_base(pi.Base(init_eig_funcs), pi.Base(init_adjoint_eig_funcs))
 
 # eigenfunctions from target system ("_t")
-eig_freq_t = np.sqrt(-a1_t ** 2 / 4 / a2 ** 2 + (a0_t - eig_val) / a2)
-eig_funcs_t = pi.Base(
-    [pi.SecondOrderRobinEigenfunction(eig_freq_t[idx], param_t, spatial_domain.bounds[-1]).scale(func(0))
-     for idx, func in enumerate(eig_funcs.fractions)])
+scale_t = [func(0) for func in eig_funcs.fractions]
+eig_funcs_t = pi.Base(pi.SecondOrderRobinEigenfunction.solve_evp_hint(param_t, l, eig_val=eig_val, scale=scale_t)[1])
 
 # create fem test functions
 nodes, fem_funcs = pi.cure_interval(pi.LagrangeFirstOrder,
@@ -126,31 +122,24 @@ controller = parabolic.control.get_parabolic_robin_backstepping_controller(state
 # add as system input
 system_input = pi.SimulationInputSum([trajectory, controller])
 
-# determine (A,B)
-rad_pde, base_labels = parabolic.get_parabolic_robin_weak_form("fem_funcs", "fem_funcs", controller, param,
-                                                               spatial_domain.bounds)
-
+# simulate
+rad_pde, base_labels = parabolic.get_parabolic_robin_weak_form(
+    "fem_funcs",
+    "fem_funcs",
+    system_input,
+    param,
+    spatial_domain.bounds)
 eval_d = pi.simulate_system(
     rad_pde,
-    initial_states=pi.Function(init_profile),
+    initial_states=pi.Function(lambda z: 0.2),
     temporal_domain=temporal_domain,
     spatial_domain=spatial_domain)[0]
 
-# ce = pi.parse_weak_formulation(rad_pde)
-# ss_weak = pi.create_state_space(ce)
-#
-# # simulate
-# t, q = pi.simulate_state_space(ss_weak, init_profile(0) * np.ones(n_fem), temporal_domain)
-
-# deregister created bases
-for lbl in base_labels:
-    pi.deregister_base(lbl)
-
 # evaluate desired output data
-y_d, t_d = pi.gevrey_tanh(T, 20)
+y_d, t_d = pi.gevrey_tanh(T, 40)
 C = pi.coefficient_recursion(y_d, alpha * y_d, param)
 x_l = pi.power_series(np.array(spatial_domain), t_d, C)
-evald_traj = pi.EvalData([t_d, spatial_domain], x_l, name="x(z,t) desired")
+evald_traj = pi.EvalData([t_d, np.array(spatial_domain)], x_l, name="x(z,t) desired")
 
 plots = list()
 # pyqtgraph visualization
@@ -162,14 +151,8 @@ plots.append(pi.PgSurfacePlot(evald_traj, title=evald_traj.name))
 plots.append(pi.MplSlicePlot([evald_traj, eval_d], spatial_point=0,
                              legend_label=["$x_d(0,t)$", "$x(0,t)$"]))
 
-pg.QAPP.exec_()
 
-# pi.show()
-#
-# pi.tear_down(("eig_funcs",
-#               "adjoint_eig_funcs",
-#               "eig_funcs_t",
-#               "fem_funcs") + base_labels,
-#              plots)
-
+# show visualization
+pg.QtGui.QApplication.instance().exec_()
+plt.show()
 
