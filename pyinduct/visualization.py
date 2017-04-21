@@ -287,12 +287,12 @@ class PgSurfacePlot(PgDataPlot):
     Plot 3 dimensional data as a surface using OpenGl.
 
     Args:
-        data (py:class:`pi.EvalData`): Data to display, if the the input-vector
+        data (:py:class:`pyinduct.core.EvalData`): Data to display, if the the input-vector
             has length of 2, a 3d surface is plotted, if has length 3, this
             surface is animated. Hereby, the time axis is assumed to be the
             first entry of the input vector.
         scales (tuple): Factors to scale the displayed data, each entry
-            corresponds to an axis in the input vector with on additional scale
+            corresponds to an axis in the input vector with one additional scale
             for the *output_data*. It therefore must be of the size:
             `len(input_data) + 1` . If no scale is given, all axis are scaled
             uniformly.
@@ -302,16 +302,13 @@ class PgSurfacePlot(PgDataPlot):
 
     Todo:
         py attention to animation axis.
+
     Note:
         For animation this object spawns a `QTimer` which needs an running
         event loop. Therefore remember to store a reference to this object.
     """
 
     def __init__(self, data, scales=None, animation_axis=0, title=""):
-        """
-
-        :type data: object
-        """
         PgDataPlot.__init__(self, data)
         self.gl_widget = gl.GLViewWidget()
         self.gl_widget.setWindowTitle(time.strftime("%H:%M:%S") + ' - ' + title)
