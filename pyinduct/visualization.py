@@ -312,7 +312,7 @@ class PgSurfacePlot(PgDataPlot):
         PgDataPlot.__init__(self, data)
         self.gl_widget = gl.GLViewWidget()
         self.gl_widget.setWindowTitle(time.strftime("%H:%M:%S") + ' - ' + title)
-        self.gl_widget.setCameraPosition(distance=1, azimuth=-45)
+        self.gl_widget.setCameraPosition(distance=3, azimuth=-135)
         self.gl_widget.show()
 
         self.grid_size = 20
@@ -384,7 +384,6 @@ class PgSurfacePlot(PgDataPlot):
                     z=self.scales[2] * self._data[idx].output_data,
                     shader="normalColor")
 
-            # plot_item.translate(-max_0 / 2, -max_1 / 2, -grid_height / 2)
             self.gl_widget.addItem(plot_item)
             self.plot_items.append(plot_item)
 
@@ -426,6 +425,14 @@ class PgSurfacePlot(PgDataPlot):
             .5 * (extrema[1][2] + extrema[0][2]) * self.scales[2]
         )
         self.gl_widget.addItem(self._yzgrid)
+
+        # set origin (zoom point) to the middle of the figure
+        # (a better way would be to realize it directly via a method of
+        # self.gl_widget, instead to shift all items)
+        [item.translate(-self.scales[0] * extrema[1][0] + sc_deltas[0] / 2,
+                        -self.scales[1] * extrema[1][1] + sc_deltas[1] / 2,
+                        -self.scales[2] * extrema[1][2] + sc_deltas[2] / 2)
+         for item in self.gl_widget.items]
 
     def _update_plot(self):
         """
