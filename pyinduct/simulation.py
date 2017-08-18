@@ -21,7 +21,8 @@ from .core import (Domain, Parameters, Function, integrate_function,
                    get_transformation_info,
                    EvalData, project_on_bases)
 from .placeholder import (Scalars, TestFunction, Input, FieldVariable,
-                          EquationTerm, get_common_target, get_common_form)
+                          EquationTerm, get_common_target, get_common_form,
+                          SymbolicTerm)
 from .registry import get_base, register_base
 
 __all__ = ["SimulationInput", "SimulationInputSum", "WeakFormulation",
@@ -182,7 +183,8 @@ class StateSpace(object):
 
     .. math::
         \boldsymbol{\dot{x}}(t) &= \sum\limits_{k=0}^{L}\boldsymbol{A}_{k} \boldsymbol{x}^{p_k}(t)
-        + \sum\limits_{j=0}^{V} \sum\limits_{k=0}^{L}\boldsymbol{B}_{j, k} \frac{\mathrm{d}^j u^{p_k}}{\mathrm{d}t^j}(t) \\
+        + \sum\limits_{j=0}^{V} \sum\limits_{k=0}^{L}\boldsymbol{B}_{j, k} \frac{\mathrm{d}^j u^{p_k}}{\mathrm{d}t^j}(t)
+        + \boldsymbol{f}(\boldsymbol{x}(t), u(t), t) \\
         \boldsymbol{y}(t) &= \boldsymbol{C}\boldsymbol{x}(t) + \boldsymbol{D}u(t)
 
     which has been approximated by projection on a base given by weight_label.
@@ -197,10 +199,11 @@ class StateSpace(object):
         d_matrix: :math:`\boldsymbol{D}`
     """
 
-    def __init__(self, a_matrices, b_matrices, base_lbl=None,
+    def __init__(self, a_matrices, b_matrices, f_handle=None, base_lbl=None,
                  input_handle=None, c_matrix=None, d_matrix=None):
         self.C = c_matrix
         self.D = d_matrix
+        self.f_handle = f_handle
         self.base_lbl = base_lbl
 
         # mandatory
@@ -257,6 +260,10 @@ class StateSpace(object):
             for p, b_mat in p_mats.items():
                 # q_t = q_t + (b_mat @ np.power(u, p)).flatten()
                 q_t = q_t + b_mat @ np.power(u, p)
+
+        if self.f_handle:
+            temp = self.f_handle(_q, u, _t)
+            q_t = q_t + temp
 
         return q_t
 
@@ -709,6 +716,7 @@ class CanonicalEquation(object):
         self.name = name
         self.dominant_lbl = dominant_lbl
         self.dynamic_forms = {}
+        self.symbolic_terms = list()
         self._static_form = CanonicalForm(self.name + "_static")
         self._finalized = False
         self._finalized_dynamic_forms = False
@@ -971,8 +979,32 @@ def create_state_space(canonical_equations):
                 b_order_mats.update({p: b_power_mat})
             b_matrices.update({order: b_order_mats})
 
-    dom_ss = StateSpace(a_matrices, b_matrices, base_lbl=new_name,
-                        input_handle=state_space_props.input)
+    if any([ce.symbolic_terms for ce in canonical_equations]):
+        for ce in canonical_equations:
+            for sym_term in ce.symbolic_terms:
+                sym_term._set_source_base(new_name)
+                sym_term._set_e_inv(ce.dominant_form.e_n_pb_inv)
+
+        def _stack_symbolic_terms(weights, input, time):
+            res = np.zeros(state_space_props.size)
+            for ce in canonical_equations:
+                idx_a = state_space_props.parts[ce.dominant_lbl]["start"]
+                idx_b = (idx_a +
+                         state_space_props.parts[ce.dominant_lbl]["size"])
+
+                for term in ce.symbolic_terms:
+                    temp = term(weights, input, time)
+                    res[idx_a: idx_b] += temp
+
+            return res
+
+        f_handle = _stack_symbolic_terms
+
+    else:
+        f_handle = None
+
+    dom_ss = StateSpace(a_matrices, b_matrices, f_handle=f_handle,
+                        base_lbl=new_name, input_handle=state_space_props.input)
     return dom_ss
 
 
@@ -1005,10 +1037,12 @@ def parse_weak_formulation(weak_form, finalize=False):
     # handle each term
     for term in weak_form.terms:
         # extract Placeholders
-        placeholders = dict(scalars=term.arg.get_arg_by_class(Scalars),
-                            functions=term.arg.get_arg_by_class(TestFunction),
-                            field_variables=term.arg.get_arg_by_class(FieldVariable),
-                            inputs=term.arg.get_arg_by_class(Input))
+        placeholders = dict(
+            scalars=term.arg.get_arg_by_class(Scalars),
+            functions=term.arg.get_arg_by_class(TestFunction),
+            field_variables=term.arg.get_arg_by_class(FieldVariable),
+            symbolic_term=term.arg.get_arg_by_class(SymbolicTerm),
+            inputs=term.arg.get_arg_by_class(Input))
 
         # field variable terms: sort into E_np, E_n-1p, ..., E_0p
         if placeholders["field_variables"]:
@@ -1056,6 +1090,12 @@ def parse_weak_formulation(weak_form, finalize=False):
             ce.add_to(weight_label=field_var.data["weight_lbl"],
                       term=term_info,
                       val=result * term.scale)
+            continue
+
+        # symbolic term f(x(z,t), u(t), z, t)
+        if placeholders["symbolic_term"]:
+            ce.symbolic_terms.append(term)
+            ce.input_function = term.input_function
             continue
 
         # TestFunctions or pre evaluated terms, those can end up in E, f or G
@@ -1353,6 +1393,16 @@ def set_dominant_labels(canonical_equations, finalize=True):
                                     max_orders[lbl]["can_eqs"][0].name,
                                     lbl),
                           UserWarning)
+
+    # check symbolic terms
+    for ce in canonical_equations:
+        for st in ce.symbolic_terms:
+            if (ce.dynamic_forms[ce.dominant_lbl].max_temp_order
+                    <= st.term_info["temp_order"][ce.dominant_lbl]):
+                raise ValueError("Symbolic terms can not hold the highest \n"
+                                 "time derivative of the dominant \n"
+                                 "weights/label. Use for this purpose \n"
+                                 "intgral terms (pyinduct.IntegralTerm).")
 
     if finalize:
         for ce in canonical_equations:

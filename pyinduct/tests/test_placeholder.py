@@ -1,6 +1,9 @@
 import unittest
+import copy
 
 import numpy as np
+import sympy as sp
+from sympy.core.function import AppliedUndef, Derivative
 import pyinduct as pi
 import pyinduct.placeholder as ph
 
@@ -338,6 +341,70 @@ class EquationTermsTest(unittest.TestCase):
         self.assertEqual(t1.arg.args[0], self.xdt)  # automated product creation
         self.assertEqual(t1.limits, (0, 1))
 
+    def test_SymbolicTerm(self):
+
+        def parse_test(term, test_func, bvm, ivm, scale, desired, debug=True):
+            sym_term = pi.SymbolicTerm(term, test_func, bvm, ivm, scale,
+                                       debug=debug)
+            desired["term"]["undef_funcs"] = sym_term.term_info["undef_funcs"]
+            desired["term"]["derivatives"] = sym_term.term_info["derivatives"]
+            for key in sym_term.term_info:
+                self.assertEqual(sym_term.term_info[key],
+                                 desired["term"][key])
+            for key in sym_term.scale_info:
+                self.assertEqual(sym_term.scale_info[key],
+                                 desired["scale"][key])
+
+        x, u1, u2, z, t, v = sp.symbols('x u1 u2 z t v')
+        _desired_infos = {"term": {"free_symbols": {z, t},
+                                   "undef_funcs": {x(z, t), v(t), u2(t), u1(t)},
+                                   "derivatives": set(),
+                                   "temp_order": {'ini_funcs': 0},
+                                   "spat_order": {'ini_funcs': 0},
+                                   "input_order": {0: 0, 1: 0}},
+                          "scale": {"free_symbols": {t},
+                                    "undef_funcs": {u1(t)},
+                                    "derivatives": {sp.diff(u1(t), t)},
+                                    "input_order": {0: 1, 1: 0}}
+                          }
+        base_var_map = {"ini_funcs": [x(z, t)]}
+        input_var_map = {0: u1(t), 1: u2(t)}
+        _term = (x(z, t) ** 2 + sp.exp(x(z, t)) * (x(z, t) * t + x(z, t) + t) +
+                 x(z, t) * u1(t) + u2(t) ** 2 + x(z, t) + v(t))
+
+        parse_test(_term, self.test_func, base_var_map, input_var_map,
+                   t * sp.diff(u1(t), t), _desired_infos)
+
+        term = sp.diff(_term, t, t)
+        _desired_infos["scale"]["derivatives"] = set()
+        _desired_infos["scale"]["input_order"] = {0: 0, 1: 0}
+        desired_infos = copy.deepcopy(_desired_infos)
+        desired_infos["term"]["temp_order"] = {"ini_funcs": 2}
+        desired_infos["term"]["input_order"] = {0: 2, 1: 2}
+        parse_test(term, self.test_func, base_var_map, input_var_map,
+                   t * u1(t), desired_infos)
+
+        term = sp.diff(_term, z, z)
+        desired_infos = copy.deepcopy(_desired_infos)
+        desired_infos["term"]["spat_order"] = {"ini_funcs": 2}
+        desired_infos["term"]["input_order"] = {0: 0, 1: 0}
+        parse_test(term, self.test_func, base_var_map, input_var_map,
+                   t * u1(t), desired_infos)
+
+        term = sp.diff(_term, t, z)
+        desired_infos = copy.deepcopy(_desired_infos)
+        desired_infos["term"]["spat_order"] = {"ini_funcs": 1}
+        desired_infos["term"]["temp_order"] = {"ini_funcs": 1}
+        desired_infos["term"]["input_order"] = {0: 1, 1: 0}
+        parse_test(term, self.test_func, base_var_map, input_var_map,
+                   t * u1(t), desired_infos)
+
+        desired_infos["scale"]["free_symbols"] = set()
+        desired_infos["scale"]["undef_funcs"] = set()
+        term = sp.diff(_term, z, t)
+        parse_test(term, self.test_func, base_var_map, input_var_map,
+                   81.5, desired_infos)
+
     def tearDown(self):
         pi.deregister_base("phi")
         pi.deregister_base("ini_funcs")
@@ -356,11 +423,24 @@ class WeakFormulationTest(unittest.TestCase):
         self.field_var = ph.FieldVariable("ini_funcs")
         self.field_var_at1 = ph.FieldVariable("ini_funcs", location=1)
 
+        x, u0, u1, z, t = sp.symbols("x u_0 u_1 z t")
+        symb_expr = x(z) ** 2 + u0 * u1 + x(1)
+        base_var_map = {"ini_funcs": [x(z), x(1)]}
+        input_var_map = {0: u0, 1: u1}
+        self.symb_term = ph.SymbolicTerm(symb_expr, self.phi, base_var_map,
+                                         input_var_map, scale=t)
+
     def test_init(self):
         self.assertRaises(TypeError, pi.WeakFormulation, ["a", "b"])
-        pi.WeakFormulation(ph.ScalarTerm(self.field_var_at1), name="scalar")  # scalar case
-        pi.WeakFormulation([ph.ScalarTerm(self.field_var_at1), ph.IntegralTerm(self.field_var, (0, 1))],
-                           name="vector")  # vectorial case
+        pi.WeakFormulation(ph.ScalarTerm(self.field_var_at1),
+                           name="scalar case")
+        pi.WeakFormulation(ph.IntegralTerm(self.field_var, (0, 1)),
+                           name="vectorial case")
+        pi.WeakFormulation(self.symb_term, name="symbolic case")
+        pi.WeakFormulation([ph.ScalarTerm(self.field_var_at1),
+                            ph.IntegralTerm(self.field_var, (0, 1)),
+                            self.symb_term],
+                           name="mixed case")
 
     def tearDown(self):
         pi.deregister_base("ini_funcs")

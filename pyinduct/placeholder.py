@@ -9,13 +9,17 @@ from abc import ABCMeta
 from numbers import Number
 
 import numpy as np
+import sympy as sp
+from  sympy.utilities.lambdify import implemented_function, lambdify
+from sympy.core.function import AppliedUndef, Derivative
 
-from .core import sanitize_input, Base, Function
+
+from .core import sanitize_input, Base, Function, StackedBase, dot_product_l2
 from .registry import register_base, get_base, is_registered
 
 __all__ = ["Scalars", "ScalarFunction", "TestFunction", "FieldVariable",
            "Input",
-           "Product", "ScalarTerm", "IntegralTerm",
+           "Product", "ScalarTerm", "IntegralTerm", "SymbolicTerm",
            "Placeholder"]
 
 
@@ -356,6 +360,10 @@ class Product(object):
     """
 
     def __init__(self, a, b=None):
+        if isinstance(a, SymbolicTerm):
+            self.args = [a, b]
+            return
+
         # convenience: accept single arguments
         if b is None:  # multiply by one as Default
             self.b_empty = True
@@ -527,6 +535,235 @@ class IntegralTerm(EquationTerm):
         if not isinstance(limits, tuple):
             raise TypeError("limits must be provided as tuple")
         self.limits = limits
+
+
+class SymbolicTerm(EquationTerm):
+    r"""
+    Class that represents an term :math:`s(u(t), t) \, f(x(z,t), u(t), z, t)`
+    in a weak equation, where you can put in
+    
+        - Nonlinearities e.g. :math:`\sin(x(z,t))` or :math:`x(z,t)\,u(t)`
+        - time varing coeffients e.g. :math:`e^{t^2} x(z,t)`
+        - and everthing else what it takes
+          (:math:`s(u(t), t) \, f(x(z,t), u(t), z, t)`).
+        
+    But be careful, in general you can not await
+    
+        - that resulting  approximation scheme is convergent
+        - or that the simulation duration is comparable with a scheme
+          without a :py:class:`.SymbolicTerm`.
+          
+    So initially try to formulate your problem with :py:class:`.IntegralTerm`'s
+    and :py:class:`.ScalarTerm`'s.
+
+    Keyword Args:
+        term (sympy.Basic or None): Term :math:`f(x(z,t), u(t), z, t)` as
+            sympy expression. Default: None.
+        test_base (.Base): Test function to project onto.
+        base_var_map (dict): Define which symbols (value: list of symbols)
+            has to be approximated by which base (key: base label).
+            For example: :code:`base_var_map = {'modal_base': [x(z,t), x(0,t)}`
+            if your term is :math:`x''(z,t) + x(1,t)`.
+        input_var_map (dict): Define which input symbol (value: symbol) has
+            which index (key: integer).
+            For example: :code:`input_var_map = {0: u0(t), 1: u1(t)}`
+        scale (numbers.Number or sympy.Basic or None): Scale
+            :math:`s(u(t), t)` as sympy expression. Default: None.
+        modules (list): List of modules which are needed to lambdify the
+            symbolic approximation scheme.
+        zero_cond (bool): Let :math:`\varphi_i(z)` be a
+            :py:class:`.BaseFraction` associated with a :py:class:`.Base` for
+            the field variable :math:`x(z,t)` then set `zero_cond`
+            
+                - True, if :math:`f(\varphi(z), u(t), z, t) = 0` for all
+                  :math:`z` where :math:`\varphi(z)=0`. For example:
+                  :math:`f(x(z,t)) = x^2(z,t)`.
+                  
+                - False, otherwise. For example: :math:`f(x(z,t))=e^{x(z,t)}`.
+                
+            Brings speed and accuracy respectively prevent issues during
+            integration. Default: False.
+        debug (bool): Some information about the `term` and `scale` are
+            printed to stdout. Default: False.
+    """
+
+    def __init__(self, term=None, test_base=None, base_var_map=None,
+                 input_var_map=None, scale=None, sim_input=None, limits=None,
+                 modules=["numpy"], zero_cond=False, debug=False):
+        self.term = term
+        self.base_var_map = base_var_map
+        self.input_var_map = input_var_map
+        if isinstance(scale, sp.Basic):
+            self.sp_scale = scale
+        else:
+            self.sp_scale = sp.Float(scale)
+        self.input_function = sim_input
+        self.modules = modules
+        self.zero_cond = zero_cond
+
+        self.test_base = get_base(test_base.data["func_lbl"])
+        self.test_base = self.test_base.derive(test_base.order[1])
+        self.test_location = test_base.location
+        self.arg = Product(self, test_base)
+
+        self.z, self.t = sp.symbols("z t")
+        if term is not None:
+            self._parse_term()
+        if scale is not None:
+            self.scale_info = self._parse_expr(self.sp_scale)
+
+        if self.test_location is None:
+            self.is_integral_term = True
+        else:
+            self.is_integral_term = False
+
+        self._debug() if debug else None
+
+    def _set_source_base(self, base_lable):
+        self.source_base = get_base(base_lable)
+
+        if isinstance(self.source_base, StackedBase):
+            self.base_stack = list(self.source_base._info)
+        else:
+            self.base_stack = [base_lable]
+
+        self._lambdify_term_and_scale()
+
+    def _set_e_inv(self, e_inv):
+        self.e_inv = e_inv
+
+    def _lambdify_term_and_scale(self):
+        # generate dummy symbols for ansatz x(z,t) = \sum_{i=0}^n c_i(t) f_i(z)
+        dummy_symbols = dict()
+        self.approx_term = self.term
+        coef_vector = np.empty((0,))
+        for lbl in self.base_stack:
+            base = get_base(lbl)
+            dummy_symbols[lbl] = dict(size = len(base))
+            dummy_symbols[lbl]["coef"] = sp.symbols(
+                "_dummy_coef_{}_:{}".format(lbl, dummy_symbols[lbl]["size"]))
+            coef_vector = np.hstack((coef_vector, dummy_symbols[lbl]["coef"]))
+            if lbl in self.base_var_map:
+                sym_funcs = sp.symbols(
+                    "_dummy_func_{}_:{}".format(lbl, dummy_symbols[lbl]["size"]),
+                    cls=sp.Function)
+                dummy_symbols[lbl]["funcs"] = [
+                    implemented_function(func, frac)
+                    for func, frac
+                    in zip(sym_funcs, base)]
+                dummy_symbols[lbl]["ansatz"] = np.sum([
+                    coef * func(self.z)
+                    for coef, func
+                    in zip(dummy_symbols[lbl]["coef"],
+                           dummy_symbols[lbl]["funcs"])])
+                for expr in self.base_var_map[lbl]:
+                    if expr.args[0] != self.t:
+                        evaluate_at = expr.args[0]
+                    else:
+                        evaluate_at = expr.args[1]
+
+                    self.approx_term = self.approx_term.subs(
+                        expr, dummy_symbols[lbl]["ansatz"].subs(
+                            self.z, evaluate_at))
+
+        input_vector = np.empty((len(self.input_var_map),), dtype=sp.Basic)
+        for idx, symb in self.input_var_map.items():
+            input_vector[idx] = symb
+
+        self._lambdified_term = lambdify(
+            (coef_vector, input_vector, self.t, self.z), self.approx_term)
+
+        self._lambdified_scale = lambdify((input_vector, self.t), self.sp_scale)
+
+    def _parse_expr(self, expr):
+        info = dict()
+        info["free_symbols"] = expr.free_symbols
+        info["undef_funcs"] = expr.atoms(AppliedUndef)
+        info["derivatives"] = {der for der in expr.atoms(Derivative)
+                               if der.atoms(AppliedUndef).pop()
+                               in info["undef_funcs"]}
+        self._set_input_order(info)
+
+        return info
+
+    def _set_input_order(self, info):
+        info["input_order"] = dict([
+            (id, self._get_diff_order(info, [self.input_var_map[id]], self.t))
+            for id in self.input_var_map])
+
+    def _parse_term(self):
+        self.term_info = self._parse_expr(self.term)
+        self.term_info["temp_order"] = dict([
+            (lbl, self._get_diff_order(self.term_info,
+                                       self.base_var_map[lbl],
+                                       self.t))
+            for lbl in self.base_var_map])
+        self.term_info["spat_order"] = dict([
+            (lbl, self._get_diff_order(self.term_info,
+                                       self.base_var_map[lbl],
+                                       self.z))
+            for lbl in self.base_var_map])
+
+    def _get_diff_order(self, info, var_list, der_var):
+        orders = list()
+        for fu in info["derivatives"]:
+            if fu.atoms(AppliedUndef).pop() in var_list:
+                orders.append(len([var
+                                   for var
+                                   in fu.args[1:]
+                                   if var == der_var]))
+
+        return max([0] + orders)
+
+
+    def _debug(self):
+        print("term_info: {}".format(None if self.term is None else str()))
+        for key, val in self.term_info.items():
+            print("{}: {}".format(key, val))
+        print("")
+
+        print("scale_info: {}".format(None if self.sp_scale is None else str()))
+        for key, val in self.scale_info.items():
+            print("{}: {}".format(key, val))
+        print("\n")
+
+    def __call__(self, weights, input, time):
+        res = np.zeros(weights.size)
+        if self.is_integral_term:
+            temp = self._integrate(weights, input, time)
+            res += temp
+        else:
+            res += self._multiply(weights, input, time)
+
+        if self.sp_scale is not None:
+            res *= self._scale(input, time)
+
+        return -self.e_inv @ res
+
+    def _get_term_function(self, weights, input, time):
+        def handle(z):
+            return self._lambdified_term(weights, input, time, z)
+
+        return Function(handle)
+
+    def _integrate(self, weights, input, time):
+        func = self._get_term_function(weights, input, time)
+
+        temp =  np.squeeze([dot_product_l2(func, test_func)
+                         for test_func
+                         in self.test_base], 0)
+
+        return temp
+
+    def _multiply(self, weights, input, time):
+        func = self._get_term_function(weights, input, time)
+
+        return np.array([func(None) * test_func(self.test_location)
+                         for test_func
+                         in self.test_base])
+
+    def _scale(self, input, time):
+        return self._lambdified_scale(input, time)
 
 
 def _evaluate_placeholder(placeholder):

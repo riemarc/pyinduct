@@ -3,6 +3,7 @@ import unittest
 import copy
 
 import numpy as np
+import sympy as sp
 import pyinduct as pi
 import pyinduct.hyperbolic.feedforward as hff
 import pyinduct.parabolic as parabolic
@@ -600,6 +601,19 @@ class ParseTest(unittest.TestCase):
         np.testing.assert_array_almost_equal(terms["G"][0][1],
                                              np.array([[0], [0], [1]]))
 
+    def test_symbolic_term(self):
+        x, u0, u1, z, t = sp.symbols("x u_0 u_1 z t")
+        symb_expr = x(z) ** 2 + u0 * u1 + x(1)
+        base_var_map = {"ini_funcs": [x(z), x(1)]}
+        input_var_map = {0: u0, 1: u1}
+        symb_term = pi.SymbolicTerm(symb_expr, self.test_funcs, base_var_map,
+                                         input_var_map, scale=t)
+
+        ce = pi.parse_weak_formulation(
+            pi.WeakFormulation([symb_term] * 3, name="test"))
+        self.assertTrue(isinstance(ce.symbolic_terms[0], pi.SymbolicTerm))
+        self.assertTrue(len(ce.symbolic_terms) == 3)
+
     def test_alternating_weights(self):
         self.assertRaises(ValueError, sim.parse_weak_formulation,
                           sim.WeakFormulation([self.alternating_weights_term,
@@ -1066,9 +1080,31 @@ class MultiplePDETest(unittest.TestCase):
             pi.ScalarTerm(pi.Product(x3(l3), psi_4(l3)), scale=-1),
         ], name="sys_4")
 
+        x_1, uu, z, t = sp.symbols('x_1 u z t')
+        base_var_map = {"base_1": [x_1(z,t)]}
+        input_var_map = {0: uu(t)}
+        self.weak_form_1_sym = pi.WeakFormulation([
+            pi.IntegralTerm(pi.Product(x1.derive(temp_order=1), psi_1), limits=self.dz1.bounds),
+            pi.SymbolicTerm(term=x_1(z,t), test_base=psi_1.derive(1),
+                            limits=self.dz1.bounds, base_var_map=base_var_map,
+                            input_var_map=input_var_map, sim_input=traj,
+                            zero_cond=True, debug=True, scale=-v1),
+            pi.ScalarTerm(pi.Product(u, psi_1(0)), scale=-v1),
+            pi.ScalarTerm(pi.Product(x1(l1), psi_1(l1)), scale=v1),
+        ], name="sys_1")
+
     def test_single_system(self):
+        import time
+        _ = time.time()
         results = pi.simulate_system(self.weak_form_1, self.ic1, self.dt, self.dz1)
+        print(time.time() - _)
         win = pi.PgAnimatedPlot(results)
+
+        _ = time.time()
+        res_sym = pi.simulate_system(self.weak_form_1_sym, self.ic1, self.dt, self.dz1)
+        print(time.time() - _)
+        win_sym = pi.PgAnimatedPlot(res_sym)
+
         if show_plots:
             pi.show(show_mpl=False)
 
@@ -1512,7 +1548,7 @@ class EvaluateApproximationTestCase(unittest.TestCase):
         pass
 
 
-class SetDominantLabel(unittest.TestCase):
+class SetDominantLabelTest(unittest.TestCase):
 
     def setUp(self):
         self.limits = (0, 1)
@@ -1615,6 +1651,34 @@ class SetDominantLabel(unittest.TestCase):
         ], name="sys_2", dominant_lbl="base_1")
         ces = sim.parse_weak_formulations([weak_form_1, weak_form_2])
         self.assertWarns(UserWarning, sim.set_dominant_labels, ces)
+
+    def test_valid_symbolic_term(self):
+        ces = self.symbolic_order(0)
+        sim.set_dominant_labels(ces)
+
+    def test_nonvalid_symbolic_term(self):
+        ces = self.symbolic_order(1)
+        self.assertRaises(ValueError, sim.set_dominant_labels, ces)
+
+    def symbolic_order(self, order):
+        xx, uu, zz, tt = sp.symbols("x u z t")
+
+        weak_form_1 = pi.WeakFormulation([
+            pi.IntegralTerm(
+                pi.Product(self.x1.derive(temp_order=4), self.psi_1),
+                limits=self.limits),
+        ], name="sys_1")
+        weak_form_2 = pi.WeakFormulation([
+            pi.SymbolicTerm(term=sp.diff(xx(zz, tt), tt, order), scale=1,
+                            test_base=self.psi_2,
+                            base_var_map={"base_2": [xx(zz, tt)]},
+                            input_var_map={0: uu}),
+            pi.IntegralTerm(
+                pi.Product(self.x2.derive(temp_order=1), self.psi_2),
+                limits=self.limits),
+        ], name="sys_2")
+
+        return sim.parse_weak_formulations([weak_form_1, weak_form_2])
 
     def tearDown(self):
         pi.deregister_base("base_1")
