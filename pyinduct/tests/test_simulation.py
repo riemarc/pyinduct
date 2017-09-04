@@ -1,6 +1,7 @@
 import sys
 import unittest
 import copy
+import time
 
 import numpy as np
 import sympy as sp
@@ -1034,7 +1035,7 @@ class MultiplePDETest(unittest.TestCase):
         nodes1, base1 = pi.cure_interval(pi.LagrangeFirstOrder, self.dz1.bounds, node_count=3)
         nodes2, base2 = pi.cure_interval(pi.LagrangeFirstOrder, self.dz2.bounds, node_count=3)
         nodes3, base3 = pi.cure_interval(pi.LagrangeFirstOrder, self.dz3.bounds, node_count=3)
-        nodes4, base4 = pi.cure_interval(pi.LagrangeFirstOrder, self.dz4.bounds, node_count=15)
+        nodes4, base4 = pi.cure_interval(pi.LagrangeFirstOrder, self.dz4.bounds, node_count=4)
 
         pi.register_base("base_1", base1)
         pi.register_base("base_2", base2)
@@ -1080,33 +1081,78 @@ class MultiplePDETest(unittest.TestCase):
             pi.ScalarTerm(pi.Product(x3(l3), psi_4(l3)), scale=-1),
         ], name="sys_4")
 
-        x_1, uu, z, t = sp.symbols('x_1 u z t')
-        base_var_map = {"base_1": [x_1(z,t)]}
+        x_1, x_2, x_3, x_4, uu, z, t = sp.symbols('x_1 x_2 x_3 x_4 u z t')
         input_var_map = {0: uu(t)}
-        self.weak_form_1_sym = pi.WeakFormulation([
+
+        base_var_map1 = {"base_1": [x_1(z,t), x_1(l1)]}
+        self.weak_form_1 = pi.WeakFormulation([
             pi.IntegralTerm(pi.Product(x1.derive(temp_order=1), psi_1), limits=self.dz1.bounds),
-            pi.SymbolicTerm(term=x_1(z,t), test_base=psi_1.derive(1),
-                            limits=self.dz1.bounds, base_var_map=base_var_map,
-                            input_var_map=input_var_map, sim_input=traj,
-                            zero_cond=True, debug=True, scale=-v1),
+            pi.IntegralTerm(pi.Product(x1, psi_1.derive(1)), limits=self.dz1.bounds, scale=-v1),
             pi.ScalarTerm(pi.Product(u, psi_1(0)), scale=-v1),
             pi.ScalarTerm(pi.Product(x1(l1), psi_1(l1)), scale=v1),
         ], name="sys_1")
+        self.weak_form_1_sym = pi.WeakFormulation([
+            pi.IntegralTerm(pi.Product(x1.derive(temp_order=1), psi_1), limits=self.dz1.bounds),
+            pi.SymbolicTerm(term=x_1(z, t), test_function=psi_1.derive(1),
+                            base_var_map=base_var_map1,
+                            input_var_map=input_var_map,
+                            debug=True, scale=-v1),
+            # input in scale arg (first half of the term)
+            pi.SymbolicTerm(test_function=psi_1(0),
+                            base_var_map=base_var_map1,
+                            input_var_map=input_var_map,
+                            input=u,
+                            debug=True, scale=-v1 * uu(t) * 0.5),
+            # input in term arg (second half of the term)
+            pi.SymbolicTerm(term=v1 * uu(t), test_function=psi_1(0),
+                            base_var_map=base_var_map1,
+                            input_var_map=input_var_map,
+                            input=u,
+                            debug=True, scale=-0.5),
+            # pi.ScalarTerm(pi.Product(u, psi_1(0)), scale=-v1),
+            pi.SymbolicTerm(term=x_1(l1), test_function=psi_1(l1),
+                            base_var_map=base_var_map1,
+                            input_var_map=input_var_map,
+                            input=u,
+                            debug=True, scale=v1),
+        ], name="sys_1")
+
+        base_var_map4 = {"base_3": [x_3(l3, t)], "base_4": [x_4(z, t)]}
+        self.weak_form_4_sym = pi.WeakFormulation([
+            pi.IntegralTerm(pi.Product(x4.derive(temp_order=2), psi_4),
+                            limits=self.dz4.bounds, scale=-1),
+            pi.ScalarTerm(pi.Product(x4.derive(temp_order=2)(l4), psi_4(l4)),
+                          scale=-mass),
+            pi.SymbolicTerm(term=-sp.diff(x_4(z, t), z),
+                            test_function=psi_4.derive(1),
+                            base_var_map=base_var_map4,
+                            input_var_map=input_var_map,
+                            debug=True, scale=1),
+            pi.SymbolicTerm(term=-x_3(l3, t),
+                            test_function=psi_4(l3),
+                            base_var_map=base_var_map4,
+                            input_var_map=input_var_map,
+                            debug=True),
+        ], name="sys_4")
 
     def test_single_system(self):
-        import time
         _ = time.time()
-        results = pi.simulate_system(self.weak_form_1, self.ic1, self.dt, self.dz1)
+        res = pi.simulate_system(self.weak_form_1, self.ic1, self.dt, self.dz1)
         print(time.time() - _)
-        win = pi.PgAnimatedPlot(results)
 
         _ = time.time()
         res_sym = pi.simulate_system(self.weak_form_1_sym, self.ic1, self.dt, self.dz1)
         print(time.time() - _)
-        win_sym = pi.PgAnimatedPlot(res_sym)
+
+        np.testing.assert_array_almost_equal(res[0].output_data,
+                                             res_sym[0].output_data,
+                                             decimal=4)
+
+        win = pi.PgAnimatedPlot(res + res_sym)
 
         if show_plots:
             pi.show(show_mpl=False)
+            del(win)
 
     def test_coupled_system(self):
         """
@@ -1152,7 +1198,9 @@ class MultiplePDETest(unittest.TestCase):
         a string with mass
         """
         weak_forms = [self.weak_form_1, self.weak_form_2, self.weak_form_3,
-                      self.weak_form_4]
+                          self.weak_form_4]
+        weak_forms_sym = [self.weak_form_1_sym, self.weak_form_2, self.weak_form_3,
+                      self.weak_form_4_sym]
         ics = {self.weak_form_1.name: self.ic1,
                self.weak_form_2.name: self.ic2,
                self.weak_form_3.name: self.ic3,
@@ -1166,8 +1214,22 @@ class MultiplePDETest(unittest.TestCase):
                        self.weak_form_3.name: (0, 0),
                        self.weak_form_4.name: (1, 1)}
 
+        _ = time.time()
         res = pi.simulate_systems(weak_forms, ics, self.dt, spat_domains, derivatives)
-        win = pi.PgAnimatedPlot(res)
+        print(time.time() - _)
+
+        pi.deregister_base('base_1_base_2_base_3_base_4')
+
+        _ = time.time()
+        res_sym = pi.simulate_systems(weak_forms_sym, ics, self.dt, spat_domains, derivatives)
+        print(time.time() - _)
+
+        np.testing.assert_array_almost_equal(res[0].output_data,
+                                             res_sym[0].output_data,
+                                             decimal=4)
+
+        win = pi.PgAnimatedPlot(res + res_sym)
+
 
         if show_plots:
             pi.show(show_mpl=False)
@@ -1670,7 +1732,7 @@ class SetDominantLabelTest(unittest.TestCase):
         ], name="sys_1")
         weak_form_2 = pi.WeakFormulation([
             pi.SymbolicTerm(term=sp.diff(xx(zz, tt), tt, order), scale=1,
-                            test_base=self.psi_2,
+                            test_function=self.psi_2,
                             base_var_map={"base_2": [xx(zz, tt)]},
                             input_var_map={0: uu}),
             pi.IntegralTerm(

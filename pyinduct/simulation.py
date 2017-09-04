@@ -96,10 +96,10 @@ class SimulationInput(object, metaclass=ABCMeta):
         Args:
             time_steps: Time points where values are demanded.
             result_key: Type of values to be returned.
-            interpolation: Interpolation method to use if demanded time-steps 
-                are not covered by the storage, see 
+            interpolation: Interpolation method to use if demanded time-steps
+                are not covered by the storage, see
                 :func:`scipy.interpolate.interp1d` for all possibilities.
-            as_eval_data (bool): Return results as 
+            as_eval_data (bool): Return results as
                 :py:class:`.EvalData` object for straightforward display.
 
         Return:
@@ -122,7 +122,7 @@ class SimulationInput(object, metaclass=ABCMeta):
     def clear_cache(self):
         """
         Clear the internal value storage.
-        
+
         When the same *SimulationInput* is used to perform various simulations,
         there is no possibility to distinguish between the different runs when
         :py:meth:`.get_results` gets called. Therefore this method can be used
@@ -138,7 +138,7 @@ class EmptyInput(SimulationInput):
         self.dim = dim
 
     def _calc_output(self, **kwargs):
-        return dict(output=np.zeros((len(np.atleast_1d(kwargs['time'])), self.dim)))
+        return dict(output=np.zeros(self.dim))
 
 
 class SimulationInputSum(SimulationInput):
@@ -262,8 +262,7 @@ class StateSpace(object):
                 q_t = q_t + b_mat @ np.power(u, p)
 
         if self.f_handle:
-            temp = self.f_handle(_q, u, _t)
-            q_t = q_t + temp
+            q_t = q_t + self.f_handle(_q, u, _t)
 
         return q_t
 
@@ -970,11 +969,15 @@ def create_state_space(canonical_equations):
         for order, order_mats in dom_ss.B.items():
             b_order_mats = b_matrices.get(order, {})
             for p, power_mat in order_mats.items():
-                b_power_mat = b_order_mats.get(p, np.zeros((state_space_props.size, state_space_props.dim_u)))
+                b_power_mat = b_order_mats.get(p, np.zeros(
+                    (state_space_props.size, max(state_space_props.dim_u, 1))))
 
                 # add entry to the last "row"
-                r_idx = state_space_props.parts[name]["start"]  # - state_space_props.parts[name]["orig_size"]
-                b_power_mat[r_idx: r_idx + power_mat.shape[0], :power_mat.shape[1]] = power_mat
+                r_idx = state_space_props.parts[name]["start"]
+                # - state_space_props.parts[name]["orig_size"]
+                b_power_mat[
+                r_idx: r_idx + power_mat.shape[0],
+                :power_mat.shape[1]] = power_mat
 
                 b_order_mats.update({p: b_power_mat})
             b_matrices.update({order: b_order_mats})
@@ -982,19 +985,21 @@ def create_state_space(canonical_equations):
     if any([ce.symbolic_terms for ce in canonical_equations]):
         for ce in canonical_equations:
             for sym_term in ce.symbolic_terms:
-                sym_term._set_source_base(new_name)
                 sym_term._set_e_inv(ce.dominant_form.e_n_pb_inv)
+                sym_term._set_source_base(new_name)
+                sym_term._lambdify_term_and_scale()
 
         def _stack_symbolic_terms(weights, input, time):
             res = np.zeros(state_space_props.size)
             for ce in canonical_equations:
-                idx_a = state_space_props.parts[ce.dominant_lbl]["start"]
+                idx_a = (state_space_props.parts[ce.dominant_lbl]["start"] +
+                         state_space_props.parts[ce.dominant_lbl]["orig_size"] *
+                         state_space_props.parts[ce.dominant_lbl]["order"])
                 idx_b = (idx_a +
-                         state_space_props.parts[ce.dominant_lbl]["size"])
+                         state_space_props.parts[ce.dominant_lbl]["orig_size"])
 
                 for term in ce.symbolic_terms:
-                    temp = term(weights, input, time)
-                    res[idx_a: idx_b] += temp
+                    res[idx_a: idx_b] += term(weights, input, time)
 
             return res
 
@@ -1095,7 +1100,10 @@ def parse_weak_formulation(weak_form, finalize=False):
         # symbolic term f(x(z,t), u(t), z, t)
         if placeholders["symbolic_term"]:
             ce.symbolic_terms.append(term)
-            ce.input_function = term.input_function
+
+            if term.input is not None:
+                ce.input_function = term.input.data["input"]
+
             continue
 
         # TestFunctions or pre evaluated terms, those can end up in E, f or G
@@ -1397,8 +1405,9 @@ def set_dominant_labels(canonical_equations, finalize=True):
     # check symbolic terms
     for ce in canonical_equations:
         for st in ce.symbolic_terms:
-            if (ce.dynamic_forms[ce.dominant_lbl].max_temp_order
-                    <= st.term_info["temp_order"][ce.dominant_lbl]):
+            if ce.dominant_lbl in st.term_info["temp_order"] and \
+                (ce.dynamic_forms[ce.dominant_lbl].max_temp_order
+                     <= st.term_info["temp_order"][ce.dominant_lbl]):
                 raise ValueError("Symbolic terms can not hold the highest \n"
                                  "time derivative of the dominant \n"
                                  "weights/label. Use for this purpose \n"
