@@ -937,7 +937,7 @@ class StringMassTest(unittest.TestCase):
 
 
 class MultipleODETest(unittest.TestCase):
-    def desired_test_pr12(self):
+    def setUp(self):
         """
         Let us consider the system of ordinary differential equations
 
@@ -951,11 +951,11 @@ class MultipleODETest(unittest.TestCase):
                     [   0   0   0   1   ]       [1]
                     [   0   0   1   0   ]       [1]
         """
-        a_desired = np.array([[0, 1, 0, 0],
-                              [0, 0, 1, 0],
-                              [0, 0, 0, 1],
-                              [0, 0, 1, 0]])
-        b_desired = np.array([[0], [0], [1], [1]])
+        self.a_desired = np.array([[0, 1, 0, 0],
+                                   [0, 0, 1, 0],
+                                   [0, 0, 0, 1],
+                                   [0, 0, 1, 0]])
+        self.b_desired = np.array([[0], [0], [1], [1]])
 
         dummy_domain = pi.Domain(bounds=(-1, 1), num=2)
         dummy_point = 0
@@ -965,30 +965,71 @@ class MultipleODETest(unittest.TestCase):
         pi.register_base("base_2", pi.Base(
             pi.Function.from_constant(1, domain=dummy_domain.bounds)))
 
-        x1 = pi.FieldVariable("base_1")(dummy_point)
-        x2 = pi.FieldVariable("base_2")(dummy_point)
-        u = pi.Input(pi.ConstantTrajectory(0))
+        self.x1 = pi.FieldVariable("base_1")(dummy_point)
+        self.x2 = pi.FieldVariable("base_2")(dummy_point)
+        self.u = pi.Input(pi.ConstantTrajectory(0))
 
+    def test_problem(self):
         weak_form_1 = pi.WeakFormulation([
-            pi.ScalarTerm(x1.derive(temp_order=3), scale=-1),
-            pi.ScalarTerm(x2),
-            pi.ScalarTerm(u)
+            pi.ScalarTerm(self.x1.derive(temp_order=3), scale=-1),
+            pi.ScalarTerm(self.x2),
+            pi.ScalarTerm(self.u)
         ], name="sys_1")
 
         weak_form_2 = pi.WeakFormulation([
-            pi.ScalarTerm(x2.derive(temp_order=1), scale=-1),
-            pi.ScalarTerm(x1.derive(temp_order=2)),
-            pi.ScalarTerm(u)
+            pi.ScalarTerm(self.x2.derive(temp_order=1), scale=-1),
+            pi.ScalarTerm(self.x1.derive(temp_order=2)),
+            pi.ScalarTerm(self.u)
         ], name="sys_2", dominant_lbl="base_2")
 
         weak_forms = [weak_form_1, weak_form_2]
         canonical_equations = [pi.parse_weak_formulation(form)
-                                    for form in weak_forms]
+                               for form in weak_forms]
 
         state_space_form = pi.create_state_space(canonical_equations)
 
-        np.testing.assert_array_almost_equal(state_space_form.A[1], a_desired)
-        np.testing.assert_array_almost_equal(state_space_form.B[0][1], b_desired)
+        np.testing.assert_array_almost_equal(state_space_form.A[1],
+                                             self.a_desired)
+        np.testing.assert_array_almost_equal(state_space_form.B[0][1],
+                                             self.b_desired)
+
+    def test_symbolic_terms(self):
+        x_1, x_2, u, t = sp.symbols("x_1, x_2, u, t")
+        input_var_map = {0: u(t)}
+
+        weak_form_1 = pi.WeakFormulation([
+            pi.ScalarTerm(self.x1.derive(temp_order=3), scale=-1),
+            pi.SymbolicTerm(term=x_2(t), base_var_map={"base_2": x_2(t)},
+                            input_var_map=input_var_map),
+            pi.SymbolicTerm(scale=u(t), input_var_map=input_var_map,
+                            input=self.u),
+        ], name="sys_1")
+
+        weak_form_2 = pi.WeakFormulation([
+            pi.ScalarTerm(self.x2.derive(temp_order=1), scale=-1),
+            pi.ScalarTerm(self.x1.derive(temp_order=2)),
+            pi.ScalarTerm(self.u)
+        ], name="sys_2", dominant_lbl="base_2")
+
+        weak_forms = [weak_form_1, weak_form_2]
+        canonical_equations = [pi.parse_weak_formulation(form)
+                               for form in weak_forms]
+
+        state_space_form_sym = pi.create_state_space(canonical_equations)
+
+        A = np.empty((4, 0))
+        for b_vec in np.eye(4):
+            A = np.hstack((A, np.reshape(state_space_form_sym.rhs(0, b_vec),
+                                         (4, 1))))
+
+        self.u.data["input"]._const = 1
+        B = np.reshape(state_space_form_sym.rhs(0, np.zeros(4)), (4, 1))
+
+        np.testing.assert_array_almost_equal(A, self.a_desired)
+        np.testing.assert_array_almost_equal(B, self.b_desired)
+
+    def tearDown(self):
+        pi.deregister_base("base_1_base_2")
 
 
 class MultiplePDETest(unittest.TestCase):

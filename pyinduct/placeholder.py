@@ -622,8 +622,8 @@ class SymbolicTerm(EquationTerm):
         debug (bool): Some information about the `term` and `scale` are
             printed to stdout. Default: False
     """
-    def __init__(self, term=None, test_function=None, base_var_map=None,
-                 input_var_map=None, scale=None, input=None,
+    def __init__(self, term=None, test_function=None, base_var_map=dict(),
+                 input_var_map=dict(), scale=None, input=None,
                  modules=["numpy"], debug=False):
 
         if isinstance(term, sp.Basic):
@@ -647,9 +647,15 @@ class SymbolicTerm(EquationTerm):
         self.input = input
         self.modules = modules
 
-        self.test_base = get_base(test_function.data["func_lbl"])
-        self.test_base = self.test_base.derive(test_function.order[1])
-        self.test_location = test_function.location
+        self.is_lumped = False
+        if test_function is None:
+            self.is_lumped = True
+            self.test_location = sp.Float(0)
+        else:
+            self.test_base = get_base(test_function.data["func_lbl"])
+            self.test_base = self.test_base.derive(test_function.order[1])
+            self.test_location = test_function.location
+
         self.arg = Product(self, test_function)
 
         self.z, self.t = sp.symbols("z t")
@@ -735,8 +741,10 @@ class SymbolicTerm(EquationTerm):
                         # does not play a role whether z is the 1st or 2nd arg
                         if expr.args[0] != self.t:
                             evaluate_at = expr.args[0]
-                        else:
+                        elif not self.is_lumped:
                             evaluate_at = expr.args[1]
+                        else:
+                            evaluate_at = sp.Float(0)
 
                         # substitute the ansatz
                         self.approx_term = self.approx_term.subs(
@@ -851,6 +859,8 @@ class SymbolicTerm(EquationTerm):
         res = np.zeros(self.e_inv.shape[0])
         if self.is_integral_term:
             res += self._integrate(weights, input, time)
+        elif self.is_lumped:
+            res += self._lambdified_term(weights, input, time, None)
         else:
             res += self._multiply(weights, input, time)
 
