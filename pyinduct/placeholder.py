@@ -866,7 +866,7 @@ class SymbolicTerm(EquationTerm):
 
         func = Function(handle, domain=self.test_base[0].domain)
 
-        return dot_product_l2(
+        return self.test_base.scalar_product_hint()[0](
             [func for _ in self.test_base],
             [t_func for t_func in self.test_base])
 
