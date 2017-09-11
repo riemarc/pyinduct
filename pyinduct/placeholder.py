@@ -587,19 +587,30 @@ class SymbolicTerm(EquationTerm):
             sympy expression. Default: None
         test_function (:py:class:`.TestFunction`): Test function to
             project onto.
-        base_var_map (dict): Define which symbols (value: list of symbols)
-            has to be approximated by which base (key: base label).
+        base_var_map (dict): Define which sympy function in associated with
+            which pyinduct base
+
+            - base label (key)
+            - sympy function (value).
+
             For example:
 
-            >>> base_var_map = {'modal_base': [x(z,t), x(0,t)}
+            >>> base_var_map = {'x1_base': x1(z,t), "x2_base": x2(z,t)}
 
-            if your term is :math:`x''(z,t) + x(1,t)`.
-        input_var_map (dict): Define which input symbol (value: symbol) has
-            which index (key: integer).
+            if your term is
+            :math:`x1''(z,t) * u1(t) + x(1,t) + x2(z,t) + u2(t)`.
+        input_var_map (dict): Define which sympy function is associated with
+            which index of the simulation input.
+
+            - input index (key)
+            - sympy function (value)
+
             For example:
 
-            >>> input_var_map = {0: u0(t), 1: u1(t)}
+            >>> input_var_map = {0: u1(t), 1: u2(t)}
 
+            if your term is
+            :math:`x1''(z,t) * u1(t) + x(1,t) + x2(z,t) + u2(t)`.
         scale (numbers.Number or sympy.Basic or None): Scale
             :math:`s(u(t), t)` as sympy expression. Default: None.
         input (:py:class:`.Input`): If `term` or `scale` make
@@ -622,7 +633,6 @@ class SymbolicTerm(EquationTerm):
         else:
             raise NotImplementedError
 
-        self.base_var_map = base_var_map
         self.input_var_map = input_var_map
 
         if isinstance(scale, sp.Basic):
@@ -643,7 +653,7 @@ class SymbolicTerm(EquationTerm):
         self.arg = Product(self, test_function)
 
         self.z, self.t = sp.symbols("z t")
-        self._parse_term()
+        self.term_info = self._parse_term(base_var_map)
         self.scale_info = self._parse_expr(self.scale)
 
         if self.test_location is None:
@@ -694,7 +704,7 @@ class SymbolicTerm(EquationTerm):
                                           coef in symbols["coef"]]))
 
             # substitute field variable with the ansatz
-            if lbl in self.base_var_map:
+            if lbl in self.term_info["base_var_map"]:
 
                 # dummy functions
                 symbols["funcs"] = sp.symbols(
@@ -718,8 +728,8 @@ class SymbolicTerm(EquationTerm):
 
                     # substitute all kinds of this field variable:
                     # x(z,t), x(1,t), x(0,t), ...
-                    # according to the lists in base_var_map (see docstring)
-                    for expr in self.base_var_map[lbl]:
+                    # according to the lists in self.term_info["base_var_map"]
+                    for expr in self.term_info["base_var_map"][lbl]:
 
                         # the fieldvariable has 2 args, with the next lines it
                         # does not play a role whether z is the 1st or 2nd arg
@@ -781,27 +791,39 @@ class SymbolicTerm(EquationTerm):
         info["derivatives"] = {der for der in expr.atoms(Derivative)
                                if der.atoms(AppliedUndef).pop()
                                in info["undef_funcs"]}
-        self._set_input_order(info)
-
-        return info
-
-    def _set_input_order(self, info):
         info["input_order"] = dict([
             (id, self._get_diff_order(info, [self.input_var_map[id]], self.t))
             for id in self.input_var_map])
 
-    def _parse_term(self):
-        self.term_info = self._parse_expr(self.term)
-        self.term_info["temp_order"] = dict([
-            (lbl, self._get_diff_order(self.term_info,
-                                       self.base_var_map[lbl],
+        return info
+
+    def _parse_term(self, base_var_map):
+        term_info = self._parse_expr(self.term)
+
+        # build an extended base_var_map
+        term_info["base_var_map"] = dict()
+        for lbl, var in base_var_map.items():
+            vars = list()
+            for func in term_info["undef_funcs"]:
+                if func.func == var.func:
+                    vars.append(func)
+            term_info["base_var_map"][lbl] = vars
+
+        # determine highest temporal derivative order
+        term_info["temp_order"] = dict([
+            (lbl, self._get_diff_order(term_info,
+                                       term_info["base_var_map"][lbl],
                                        self.t))
-            for lbl in self.base_var_map])
-        self.term_info["spat_order"] = dict([
-            (lbl, self._get_diff_order(self.term_info,
-                                       self.base_var_map[lbl],
+            for lbl in term_info["base_var_map"]])
+
+        # determine highest spatial derivative order
+        term_info["spat_order"] = dict([
+            (lbl, self._get_diff_order(term_info,
+                                       term_info["base_var_map"][lbl],
                                        self.z))
-            for lbl in self.base_var_map])
+            for lbl in term_info["base_var_map"]])
+
+        return term_info
 
     def _get_diff_order(self, info, var_list, der_var):
         orders = list()

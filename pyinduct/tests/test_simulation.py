@@ -604,8 +604,8 @@ class ParseTest(unittest.TestCase):
 
     def test_symbolic_term(self):
         x, u0, u1, z, t = sp.symbols("x u_0 u_1 z t")
-        symb_expr = x(z) ** 2 + u0 * u1 + x(1)
-        base_var_map = {"ini_funcs": [x(z), x(1)]}
+        symb_expr = x(z,t) ** 2 + u0 * u1 + x(1,t)
+        base_var_map = {"ini_funcs": x(z,t)}
         input_var_map = {0: u0, 1: u1}
         symb_term = pi.SymbolicTerm(symb_expr, self.test_funcs, base_var_map,
                                          input_var_map, scale=t)
@@ -1084,7 +1084,7 @@ class MultiplePDETest(unittest.TestCase):
         x_1, x_2, x_3, x_4, uu, z, t = sp.symbols('x_1 x_2 x_3 x_4 u z t')
         input_var_map = {0: uu(t)}
 
-        base_var_map1 = {"base_1": [x_1(z,t), x_1(l1)]}
+        base_var_map1 = {"base_1": x_1(z,t)}
         self.weak_form_1 = pi.WeakFormulation([
             pi.IntegralTerm(pi.Product(x1.derive(temp_order=1), psi_1), limits=self.dz1.bounds),
             pi.IntegralTerm(pi.Product(x1, psi_1.derive(1)), limits=self.dz1.bounds, scale=-v1),
@@ -1117,7 +1117,7 @@ class MultiplePDETest(unittest.TestCase):
                             debug=True, scale=v1),
         ], name="sys_1")
 
-        base_var_map4 = {"base_3": [x_3(l3, t)], "base_4": [x_4(z, t)]}
+        base_var_map4 = {"base_3": x_3(z, t), "base_4": x_4(z, t)}
         self.weak_form_4_sym = pi.WeakFormulation([
             pi.IntegralTerm(pi.Product(x4.derive(temp_order=2), psi_4),
                             limits=self.dz4.bounds, scale=-1),
@@ -1733,7 +1733,7 @@ class SetDominantLabelTest(unittest.TestCase):
         weak_form_2 = pi.WeakFormulation([
             pi.SymbolicTerm(term=sp.diff(xx(zz, tt), tt, order), scale=1,
                             test_function=self.psi_2,
-                            base_var_map={"base_2": [xx(zz, tt)]},
+                            base_var_map={"base_2": xx(zz, tt)},
                             input_var_map={0: uu}),
             pi.IntegralTerm(
                 pi.Product(self.x2.derive(temp_order=1), self.psi_2),

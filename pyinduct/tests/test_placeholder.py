@@ -1,9 +1,9 @@
 import unittest
 import copy
+import collections
 
 import numpy as np
 import sympy as sp
-from sympy.core.function import AppliedUndef, Derivative
 import pyinduct as pi
 import pyinduct.placeholder as ph
 
@@ -295,7 +295,7 @@ class ProductTest(unittest.TestCase):
 class EquationTermsTest(unittest.TestCase):
     def setUp(self):
         self.input = ph.Input(np.sin)
-        self.phi = np.array([pi.Function(lambda x: 2 * x)])
+        self.phi = pi.Base(np.array([pi.Function(lambda x: 2 * x)]))
         pi.register_base("phi", self.phi)
         self.test_func = ph.TestFunction("phi")
 
@@ -343,34 +343,53 @@ class EquationTermsTest(unittest.TestCase):
 
     def test_SymbolicTerm(self):
 
+        def sort_if_iterable(item):
+            if isinstance(item, collections.Iterable):
+                if all([isinstance(var, sp.Basic) for var in item]):
+                    item = [str(var) for var in item]
+                return sorted(item)
+            else:
+                return item
+
         def parse_test(term, test_func, bvm, ivm, scale, desired, debug=True):
             sym_term = pi.SymbolicTerm(term, test_func, bvm, ivm, scale,
                                        debug=debug)
             desired["term"]["undef_funcs"] = sym_term.term_info["undef_funcs"]
             desired["term"]["derivatives"] = sym_term.term_info["derivatives"]
+            for key in sym_term.term_info["base_var_map"]:
+                self.assertEqual(
+                    sort_if_iterable(sym_term.term_info["base_var_map"][key]),
+                    sort_if_iterable(desired["term"]["base_var_map"][key]))
             for key in sym_term.term_info:
-                self.assertEqual(sym_term.term_info[key],
-                                 desired["term"][key])
+                if key is not "base_var_map":
+                    self.assertEqual(sym_term.term_info[key],
+                                     desired["term"][key])
             for key in sym_term.scale_info:
-                self.assertEqual(sym_term.scale_info[key],
-                                 desired["scale"][key])
+                if key is not "base_var_map":
+                    self.assertEqual(sym_term.scale_info[key],
+                                     desired["scale"][key])
 
         x, u1, u2, z, t, v = sp.symbols('x u1 u2 z t v')
         _desired_infos = {"term": {"free_symbols": {z, t},
                                    "undef_funcs": {x(z, t), v(t), u2(t), u1(t)},
+                                   "base_var_map": {"ini_funcs": [x(z,t),
+                                                                  x(1,t),
+                                                                  x(z,1)]},
                                    "derivatives": set(),
                                    "temp_order": {'ini_funcs': 0},
                                    "spat_order": {'ini_funcs': 0},
-                                   "input_order": {0: 0, 1: 0}},
+                                   "input_order": {0: 0, 1: 0},
+                                   "is_one": False},
                           "scale": {"free_symbols": {t},
                                     "undef_funcs": {u1(t)},
                                     "derivatives": {sp.diff(u1(t), t)},
-                                    "input_order": {0: 1, 1: 0}}
+                                    "input_order": {0: 1, 1: 0},
+                                    "is_one": False}
                           }
-        base_var_map = {"ini_funcs": [x(z, t)]}
+        base_var_map = {"ini_funcs": x(z, t)}
         input_var_map = {0: u1(t), 1: u2(t)}
         _term = (x(z, t) ** 2 + sp.exp(x(z, t)) * (x(z, t) * t + x(z, t) + t) +
-                 x(z, t) * u1(t) + u2(t) ** 2 + x(z, t) + v(t))
+                 x(z, t) * u1(t) + u2(t) ** 2 + x(z, t) + v(t)*x(1,t) + x(z,1))
 
         parse_test(_term, self.test_func, base_var_map, input_var_map,
                    t * sp.diff(u1(t), t), _desired_infos)
@@ -381,6 +400,8 @@ class EquationTermsTest(unittest.TestCase):
         desired_infos = copy.deepcopy(_desired_infos)
         desired_infos["term"]["temp_order"] = {"ini_funcs": 2}
         desired_infos["term"]["input_order"] = {0: 2, 1: 2}
+        desired_infos["term"]["base_var_map"] = {"ini_funcs": [x(z, t),
+                                                               x(1, t)]}
         parse_test(term, self.test_func, base_var_map, input_var_map,
                    t * u1(t), desired_infos)
 
@@ -388,6 +409,8 @@ class EquationTermsTest(unittest.TestCase):
         desired_infos = copy.deepcopy(_desired_infos)
         desired_infos["term"]["spat_order"] = {"ini_funcs": 2}
         desired_infos["term"]["input_order"] = {0: 0, 1: 0}
+        desired_infos["term"]["base_var_map"] = {"ini_funcs": [x(z, t),
+                                                               x(z, 1)]}
         parse_test(term, self.test_func, base_var_map, input_var_map,
                    t * u1(t), desired_infos)
 
@@ -396,11 +419,13 @@ class EquationTermsTest(unittest.TestCase):
         desired_infos["term"]["spat_order"] = {"ini_funcs": 1}
         desired_infos["term"]["temp_order"] = {"ini_funcs": 1}
         desired_infos["term"]["input_order"] = {0: 1, 1: 0}
+        desired_infos["term"]["base_var_map"] = {"ini_funcs": [x(z, t)]}
         parse_test(term, self.test_func, base_var_map, input_var_map,
                    t * u1(t), desired_infos)
 
         desired_infos["scale"]["free_symbols"] = set()
         desired_infos["scale"]["undef_funcs"] = set()
+        desired_infos["term"]["base_var_map"] = {"ini_funcs": [x(z, t)]}
         term = sp.diff(_term, z, t)
         parse_test(term, self.test_func, base_var_map, input_var_map,
                    81.5, desired_infos)
@@ -425,7 +450,7 @@ class WeakFormulationTest(unittest.TestCase):
 
         x, u0, u1, z, t = sp.symbols("x u_0 u_1 z t")
         symb_expr = x(z) ** 2 + u0 * u1 + x(1)
-        base_var_map = {"ini_funcs": [x(z), x(1)]}
+        base_var_map = {"ini_funcs": x(z)}
         input_var_map = {0: u0, 1: u1}
         self.symb_term = ph.SymbolicTerm(symb_expr, self.phi, base_var_map,
                                          input_var_map, scale=t)
