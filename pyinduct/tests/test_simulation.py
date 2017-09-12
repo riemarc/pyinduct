@@ -1017,18 +1017,14 @@ class MultipleODETest(unittest.TestCase):
 
         state_space_form_sym = pi.create_state_space(canonical_equations)
 
-        A = np.empty((4, 0))
-        for b_vec in np.eye(4):
-            A = np.hstack((A, np.reshape(state_space_form_sym.rhs(0, b_vec),
-                                         (4, 1))))
-
-        self.u.data["input"]._const = 1
-        B = np.reshape(state_space_form_sym.rhs(0, np.zeros(4)), (4, 1))
+        A, B = _get_a_and_b(state_space_form_sym, 4)
 
         np.testing.assert_array_almost_equal(A, self.a_desired)
         np.testing.assert_array_almost_equal(B, self.b_desired)
 
     def tearDown(self):
+        pi.deregister_base("base_1")
+        pi.deregister_base("base_2")
         pi.deregister_base("base_1_base_2")
 
 
@@ -1177,23 +1173,21 @@ class MultiplePDETest(unittest.TestCase):
         ], name="sys_4")
 
     def test_single_system(self):
-        _ = time.time()
         res = pi.simulate_system(self.weak_form_1, self.ic1, self.dt, self.dz1)
-        print(time.time() - _)
 
-        _ = time.time()
-        res_sym = pi.simulate_system(self.weak_form_1_sym, self.ic1, self.dt, self.dz1)
-        print(time.time() - _)
-
-        np.testing.assert_array_almost_equal(res[0].output_data,
-                                             res_sym[0].output_data,
-                                             decimal=4)
-
-        win = pi.PgAnimatedPlot(res + res_sym)
+        win = pi.PgAnimatedPlot(res)
 
         if show_plots:
             pi.show(show_mpl=False)
             del(win)
+
+        # test if the state space derived from symbolic terms provide the
+        # same results
+        state_space = _get_state_space(self.weak_form_1, self.ic1, self.dt, self.dz1)
+        state_space_sym = _get_state_space(self.weak_form_1_sym, self.ic1, self.dt, self.dz1)
+        A, B = _get_a_and_b(state_space_sym, len(state_space.A[1]))
+        np.testing.assert_array_almost_equal(state_space.A[1], A)
+        np.testing.assert_array_almost_equal(state_space.B[0][1], B)
 
     def test_coupled_system(self):
         """
@@ -1255,26 +1249,25 @@ class MultiplePDETest(unittest.TestCase):
                        self.weak_form_3.name: (0, 0),
                        self.weak_form_4.name: (1, 1)}
 
-        _ = time.time()
         res = pi.simulate_systems(weak_forms, ics, self.dt, spat_domains, derivatives)
-        print(time.time() - _)
 
-        pi.deregister_base('base_1_base_2_base_3_base_4')
-
-        _ = time.time()
-        res_sym = pi.simulate_systems(weak_forms_sym, ics, self.dt, spat_domains, derivatives)
-        print(time.time() - _)
-
-        np.testing.assert_array_almost_equal(res[0].output_data,
-                                             res_sym[0].output_data,
-                                             decimal=4)
-
-        win = pi.PgAnimatedPlot(res + res_sym)
+        win = pi.PgAnimatedPlot(res)
 
 
         if show_plots:
             pi.show(show_mpl=False)
             del win
+
+        # test if the state space derived from symbolic terms provide the
+        # same results
+        pi.deregister_base('base_1_base_2_base_3_base_4')
+        state_space = _get_state_spaces(weak_forms, ics, self.dt, spat_domains, derivatives)
+        pi.deregister_base('base_1_base_2_base_3_base_4')
+        state_space_sym = _get_state_spaces(weak_forms_sym, ics, self.dt, spat_domains, derivatives)
+        A, B = _get_a_and_b(state_space_sym, len(state_space.A[1]))
+        np.testing.assert_array_almost_equal(state_space.A[1], A)
+        np.testing.assert_array_almost_equal(state_space.B[0][1], B)
+        pi.deregister_base('base_1_base_2_base_3_base_4')
 
     def tearDown(self):
         pi.deregister_base("base_1")
@@ -1787,3 +1780,51 @@ class SetDominantLabelTest(unittest.TestCase):
         pi.deregister_base("base_1")
         pi.deregister_base("base_2")
         pi.deregister_base("base_3")
+
+
+def _get_a_and_b(state_space, length):
+    """
+    Returns the A and B matrices for a given state space model.
+
+    Args:
+        state_space (:py:class:`.StateSpace`):
+        length (int): len(state_space(_t, _q))
+
+    Returns:
+        tuple: (A, B)
+    """
+    input = copy.deepcopy(state_space.input)
+    temporary_input = pi.ConstantTrajectory(0)
+    state_space.input = temporary_input
+
+    A = np.empty((length, 0))
+    for b_vec in np.eye(length):
+        A = np.hstack((A, np.reshape(state_space.rhs(0, b_vec), (length, 1))))
+
+    temporary_input._const = 1
+    B = np.reshape(state_space.rhs(0, np.zeros(length)), (length, 1))
+
+    state_space.input = input
+
+    return A, B
+
+
+def _get_state_space(weak_form, initial_states,
+                     temporal_domain, spatial_domain,
+                     derivative_orders=(0, 0), settings=None):
+    ics = pi.sanitize_input(initial_states, pi.Function)
+    initial_states = {weak_form.name: ics}
+    spatial_domains = {weak_form.name: spatial_domain}
+    derivative_orders = {weak_form.name: derivative_orders}
+    return _get_state_spaces([weak_form], initial_states, temporal_domain,
+                             spatial_domains, derivative_orders, settings)
+
+
+def _get_state_spaces(weak_forms, initial_states, temporal_domain,
+                      spatial_domains, derivative_orders=None,
+                      settings=None):
+    if derivative_orders is None:
+        derivative_orders = dict([(lbl, (0, 0)) for lbl in spatial_domains])
+    weak_forms = pi.sanitize_input(weak_forms, pi.WeakFormulation)
+    canonical_equations = pi.parse_weak_formulations(weak_forms)
+    return pi.create_state_space(canonical_equations)
