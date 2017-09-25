@@ -13,7 +13,8 @@ import sympy as sp
 from sympy.utilities.lambdify import implemented_function, lambdify
 from sympy.core.function import AppliedUndef, Derivative
 
-from .core import sanitize_input, Base, Function, StackedBase, dot_product_l2
+from .core import (sanitize_input, Base, Function, StackedBase, dot_product_l2,
+                   calculate_scalar_product_matrix)
 from .registry import register_base, get_base, is_registered
 
 __all__ = ["Scalars", "ScalarFunction", "TestFunction", "FieldVariable",
@@ -556,9 +557,7 @@ class SymbolicTerm(EquationTerm):
     The integration domain :math:`(a,b)` is taken from the domain of the
     provided test functions.
 
-                                                                  \||/
-                                                                 @(OO)@
-    In the term you can put in                                    (°°)
+    In the term you can put in
 
         - nonlinearities e.g. :math:`\sin(x(z,t))` or :math:`x(z,t)\,u(t)`
         - time varing coeffients e.g. :math:`e^{t^2} x(z,t)`
@@ -619,12 +618,34 @@ class SymbolicTerm(EquationTerm):
             :py:class:`.SimulationInputVector`. Default: None
         modules (list): List of modules which are needed to lambdify the
             symbolic approximation scheme. Default: `["numpy"]`
+        interpolate (bool): Default: False. To save time (integration at
+            runtime) set this True and integrate a priori. The term
+            must meet some criteria:
+
+                - All field variables must be defined on the same domain.
+                - The approximation base for each field variable of this term
+                  must consist of one of the following function types/classes
+
+                    - :py:class:`.LagrangeFirstOrder`
+                    - :py:class:`.LagrangeSecondOrder`
+                    - :py:class:`.LagrangeNthOrder`.
+
+                - The points :math:`z_1,...,z_n` where the base fractions holds
+                  :math:`f_1(z_1)=1,...,f_n(z_n)=1` must be the same for each
+                  base/fieldvariable.
+                - The term can not hold any spatial derivative of a field
+                  variable, only temporal derivatives allowed.
+                - The term can not hold any spatial dependency, beside the
+                  field variables. Hence the term  must be of the form
+
+                  .. math:: f(x(z,t), u(t), t)
+
         debug (bool): Some information about the `term` and `scale` are
             printed to stdout. Default: False
     """
     def __init__(self, term=None, test_function=None, base_var_map=dict(),
                  input_var_map=dict(), scale=None, input=None,
-                 modules=["numpy"], debug=False):
+                 modules=["numpy"], interpolate=False, debug=False):
 
         if isinstance(term, sp.Basic):
             self.term = term
@@ -667,34 +688,53 @@ class SymbolicTerm(EquationTerm):
         else:
             self.is_integral_term = False
 
+        self.interpolate = interpolate
+
         if debug:
             self._debug()
 
-    def _set_source_base(self, base_lable):
-        self.source_base = get_base(base_lable)
+    def finalize(self, e_inv, dom_lbl, src_lbl):
+        """
+        Must be called before the simulation.
+
+        Args:
+            e_inv (array-like): Inverse left hand side Matrix.
+            dom_lbl (str): Base label from the dominant base of the
+                corresponding canonical equation.
+            src_lbl (str): Base label from the simulation base.
+        """
+        self.e_inv = e_inv
+        self.source_base = get_base(src_lbl)
+        self.dom_base = get_base(dom_lbl)
 
         if isinstance(self.source_base, StackedBase):
             self.base_stack = list(self.source_base._info)
         else:
-            self.base_stack = [base_lable]
+            self.base_stack = [src_lbl]
 
-    def _set_e_inv(self, e_inv):
-        self.e_inv = e_inv
+        self._lambdify_scale()
 
-    def _lambdify_term_and_scale(self):
+        self._lambdify_term()
+        if self.interpolate:
+            self._lambdify_interp_term()
 
-        self.approx_term = self.term
+    def _get_input_vector(self):
+        input_vector = np.empty((len(self.input_var_map),), dtype=sp.Basic)
+        for idx, symb in self.input_var_map.items():
+            input_vector[idx] = symb
+
+        return input_vector
+
+    def _get_coef_vector(self):
         coef_vector = np.empty((0,))
+        coefficients = dict()
 
-        # generate dummy symbols for ansatz x(z,t) = \sum_{i=0}^n c_i(t) f_i(z)
-        # and substiute the respective vairable in self.approx_term
         for lbl in self.base_stack:
-            base = get_base(lbl)
-            symbols = dict(size = len(base))
+            size = len(get_base(lbl))
 
             # dummy coefficients
-            symbols["coef"] = [coef for coef in sp.symbols(
-                "_dummy_coef_{}_:{}".format(lbl, symbols["size"]))]
+            coefficients[lbl] = [coef for coef in sp.symbols(
+                "_dummy_coef_{}_:{}".format(lbl, size))]
 
             # temporal order
             if isinstance(self.source_base, StackedBase):
@@ -707,7 +747,26 @@ class SymbolicTerm(EquationTerm):
             for ord in range(temp_order + 1):
                 coef_vector = np.hstack((coef_vector,
                                          ["_d" * ord + str(coef) for
-                                          coef in symbols["coef"]]))
+                                          coef in coefficients[lbl]]))
+
+        return coef_vector, coefficients
+
+    def _lambdify_term(self):
+
+        self.approx_term = self.term
+        coef_vector, coefficients = self._get_coef_vector()
+
+        # for substituted functions
+        self.func_subs = list()
+
+        # generate dummy symbols for ansatz x(z,t) = \sum_{i=0}^n c_i(t) f_i(z)
+        # and substiute the respective vairable in self.approx_term
+        for lbl in self.base_stack:
+            base = get_base(lbl)
+            symbols = dict(size = len(base))
+
+            # dummy coefficients
+            symbols["coef"] = coefficients[lbl]
 
             # substitute field variable with the ansatz
             if lbl in self.term_info["base_var_map"]:
@@ -753,43 +812,63 @@ class SymbolicTerm(EquationTerm):
                                 self.z, evaluate_at),
                                 self.z, sord, self.t, tord))
 
-                # replace all symbolic (spatial derivatives) with
-                # its implementations, for lambdificaton
-                subs_list = list()
+                # replace all symbolic initial fucntions (and spatial
+                # derivatives) with its implementations, for lambdificaton
+                f_subs_list = list()
                 for sord in reversed(range(self.term_info[
                                                "spat_order"][lbl] + 1)):
                     for func, frac in zip(symbols["funcs"], base.derive(sord)):
                         der_func = sp.diff(func(self.z), self.z, sord)
                         dummy = sp.Function("_d" * sord + str(func))
-                        subs_list.append(
+                        f_subs_list.append(
                             (der_func,
                              implemented_function(dummy, frac)(self.z)))
+                self.approx_term = self.approx_term.subs(f_subs_list)
+                self.func_subs += f_subs_list
 
-                # replace all symbolic (temporal derivatived) coefficients
+                # replace all symbolic coefficients (and temporal derivatives)
                 # c_0(t), c_1(t), ..., \dot{c}_0(t), \dot{c}_1(t), ...
                 # with other dummy names
                 # c_0, c_1, ..., _d_c_0, _d_c_1, ...
                 # for lambdificaton
+                c_subs_list = list()
                 for tord in reversed(range(self.term_info[
                                                "temp_order"][lbl] +1)):
                     for coef in symbols["coef"]:
                         der_func = sp.diff(coef(self.t), self.t, tord)
                         dummy = sp.symbols("_d" * tord + str(coef))
-                        subs_list.append(
+                        c_subs_list.append(
                             (der_func, dummy))
-
-                # substitute coefficients and initial functions
-                self.approx_term = self.approx_term.subs(subs_list)
-
-        input_vector = np.empty((len(self.input_var_map),), dtype=sp.Basic)
-        for idx, symb in self.input_var_map.items():
-            input_vector[idx] = symb
+                self.approx_term = self.approx_term.subs(c_subs_list)
 
         self._lambdified_term = lambdify(
-            (coef_vector, input_vector, self.t, self.z), self.approx_term,
-            modules=self.modules)
+            (coef_vector, self._get_input_vector(), self.t, self.z),
+            self.approx_term, modules=self.modules)
 
-        self._lambdified_scale = lambdify((input_vector, self.t), self.scale)
+    def _lambdify_interp_term(self):
+        # provide scalar product matrix
+        self.interp_matrix = calculate_scalar_product_matrix(
+            dot_product_l2, self.test_base, self.dom_base)
+
+        # substitute all initial functions with 1
+        f_subs_list = [(func, 1) for _, func in self.func_subs]
+        interp_approx_term = self.approx_term.subs(f_subs_list)
+
+        # select the correct weights for the nonlinear coefficient vector
+        coef_vector, coefficients = self._get_coef_vector()
+        nonlin_coef_vector = sp.Matrix(np.ones(self.e_inv.shape[0]))
+        for i in range(self.e_inv.shape[0]):
+            c_subs_list = [(coef, 0) for coef in coef_vector
+                           if not coef.endswith("_{}".format(i))]
+            nonlin_coef_vector[i] = interp_approx_term.subs(c_subs_list)
+
+        self._lambdified_nonlin_cvec = lambdify(
+            (coef_vector, self._get_input_vector(), self.t),
+            nonlin_coef_vector, modules=self.modules)
+
+    def _lambdify_scale(self):
+        self._lambdified_scale = lambdify((self._get_input_vector(), self.t),
+                                          self.scale, modules=self.modules)
 
     def _parse_expr(self, expr):
         info = dict()
@@ -857,17 +936,28 @@ class SymbolicTerm(EquationTerm):
 
     def __call__(self, weights, input, time):
         res = np.zeros(self.e_inv.shape[0])
+
         if self.is_integral_term:
-            res += self._integrate(weights, input, time)
+            if self.interpolate:
+                res += self._interpolate(weights, input, time)
+            else:
+                res += self._integrate(weights, input, time)
+
         elif self.is_lumped:
             res += self._lambdified_term(weights, input, time, None)
+
         else:
             res += self._multiply(weights, input, time)
 
-        if self.scale is not None:
+        if self.scale != 1:
             res *= self._scale(input, time)
 
         return -self.e_inv @ res
+
+    def _interpolate(self, weights, input, time):
+        return np.squeeze(np.dot(
+            self.interp_matrix,
+            self._lambdified_nonlin_cvec(weights, input, time)), 1)
 
     def _integrate(self, weights, input, time):
 

@@ -1007,9 +1007,8 @@ def create_state_space(canonical_equations):
     if any([ce.symbolic_terms for ce in canonical_equations]):
         for ce in canonical_equations:
             for sym_term in ce.symbolic_terms:
-                sym_term._set_e_inv(ce.dominant_form.e_n_pb_inv)
-                sym_term._set_source_base(new_name)
-                sym_term._lambdify_term_and_scale()
+                sym_term.finalize(ce.dominant_form.e_n_pb_inv,
+                                  ce.dominant_lbl, new_name)
 
         def _stack_symbolic_terms(weights, input, time):
             res = np.zeros(state_space_props.size)

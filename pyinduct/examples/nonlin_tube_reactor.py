@@ -73,21 +73,6 @@ if __name__ == "__main__" or test_examples:
         return 0 if t < 5 / 3 * 2 else -np.cos(np.pi / 5 * t) + 1
 
 
-    def arhenius_eq(E, T):
-        if np.isclose(T, 0) and T >= 0:
-            return 0
-        elif np.isclose(T, 0) and T < 0:
-            return np.inf
-
-        try:
-            return np.exp(E / T)
-        except FloatingPointError:
-            if T >= 0:
-                return 0
-            else:
-                return np.inf
-
-
     def initial_condition(z):
         return 1 + 3 * z
 
@@ -103,12 +88,12 @@ if __name__ == "__main__" or test_examples:
     l = domain.bounds[1]
     k1 = k2 = k3 = k4 = beta1 = Omega = 1
     E1 = E2 = E3 = E4 = -1
+    interpolate = True
 
     # sympy symbols
     u1, u2, u3, x1, x2, x3, x4, z, t = sp.symbols("u1 u2 u3 x1 x2 x3 x4 z t")
     v = implemented_function(sp.Function("v"), velocity)
     Ta = implemented_function(sp.Function("Ta"), ambient_temp)
-    aexp = implemented_function(sp.Function("aexp"), arhenius_eq)
 
     # pyinduct placholders
     u = SimulationInputVector([CrazyInput(i * .4) for i in range(1, 4)])
@@ -130,12 +115,13 @@ if __name__ == "__main__" or test_examples:
         SymbolicTerm(term=v(t) * u1(t), test_function=psi1(0), input=input,
                      base_var_map=base_var_map, input_var_map=input_var_map),
         SymbolicTerm(term=v(t) * x1(z,t), test_function=psi1.derive(1),
-                     base_var_map=base_var_map, input_var_map=input_var_map),
-        SymbolicTerm(term=(-Omega * k1 * aexp(E1, x4(z,t)) * x1(z,t) *
+                     base_var_map=base_var_map, input_var_map=input_var_map,
+                     interpolate=interpolate),
+        SymbolicTerm(term=(-Omega * k1 * sp.exp(E1 / x4(z,t)) * x1(z,t) *
                            (1 - x3(z,t)) +
-                           Omega * k2 * aexp(E1, x4(z,t)) * x3(z,t)),
+                           Omega * k2 * sp.exp(E1 / x4(z,t)) * x3(z,t)),
                      test_function=psi1, base_var_map=base_var_map,
-                     input_var_map=input_var_map)
+                     input_var_map=input_var_map, interpolate=interpolate)
     ], name="x_1")
     wf2 = WeakFormulation([
         IntegralTerm(Product(x_2.derive(temp_order=1), psi2),
@@ -145,20 +131,21 @@ if __name__ == "__main__" or test_examples:
         SymbolicTerm(term=v(t) * u2(t), test_function=psi2(0), input=input,
                      base_var_map=base_var_map, input_var_map=input_var_map),
         SymbolicTerm(term=v(t) * x2(z,t), test_function=psi2.derive(1),
-                     base_var_map=base_var_map, input_var_map=input_var_map),
-        SymbolicTerm(term=-Omega * k3 * aexp(E3, x4(z,t)) * x3(z,t) * x2(z,t),
+                     base_var_map=base_var_map, input_var_map=input_var_map,
+                     interpolate=interpolate),
+        SymbolicTerm(term=-Omega * k3 * sp.exp(E3 / x4(z,t)) * x3(z,t) * x2(z,t),
                      test_function=psi2, base_var_map=base_var_map,
-                     input_var_map=input_var_map)
+                     input_var_map=input_var_map, interpolate=interpolate)
     ], name="x_2")
     wf3 = WeakFormulation([
         IntegralTerm(Product(x_3.derive(temp_order=1), psi3),
                      limits=domain.bounds, scale=-1),
-        SymbolicTerm(term=(k1 * aexp(E1, x4(z,t)) * x1(z,t) * (1 -x3(z,t)) -
-                           k2 * aexp(E2, x4(z,t)) * x3(z,t) -
-                           k3 * aexp(E3, x4(z,t)) * x3(z,t) * x2(z,t) -
-                           k4 * aexp(E4, x4(z,t)) * x3(z,t)),
+        SymbolicTerm(term=(k1 * sp.exp(E1 / x4(z,t)) * x1(z,t) * (1 -x3(z,t)) -
+                           k2 * sp.exp(E2 / x4(z,t)) * x3(z,t) -
+                           k3 * sp.exp(E3 / x4(z,t)) * x3(z,t) * x2(z,t) -
+                           k4 * sp.exp(E4 / x4(z,t)) * x3(z,t)),
                      test_function=psi3, base_var_map=base_var_map,
-                     input_var_map=input_var_map)
+                     input_var_map=input_var_map, interpolate=interpolate)
     ], name="x_3")
     wf4 = WeakFormulation([
         IntegralTerm(Product(x_4.derive(temp_order=1), psi4),
@@ -168,9 +155,11 @@ if __name__ == "__main__" or test_examples:
         SymbolicTerm(term=v(t) * u3(t), test_function=psi4(0), input=input,
                      base_var_map=base_var_map, input_var_map=input_var_map),
         SymbolicTerm(term=v(t) * x4(z,t), test_function=psi4.derive(1),
-                     base_var_map=base_var_map, input_var_map=input_var_map),
+                     base_var_map=base_var_map, input_var_map=input_var_map,
+                     interpolate=interpolate),
         SymbolicTerm(term=beta1 * (x4(z,t) - Ta(t)), test_function=psi4,
-                     base_var_map=base_var_map, input_var_map=input_var_map),
+                     base_var_map=base_var_map, input_var_map=input_var_map,
+                     interpolate=interpolate),
         # dummy inputs
         ScalarTerm(Product(Input(u, index=0), psi4(0)), scale=0),
         ScalarTerm(Product(Input(u, index=1), psi4(0)), scale=0),
