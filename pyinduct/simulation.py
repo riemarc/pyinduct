@@ -8,6 +8,8 @@ from abc import ABCMeta, abstractmethod
 from collections import OrderedDict
 from copy import copy
 from itertools import chain
+import sys
+from tqdm import tqdm
 
 import numpy as np
 from scipy.integrate import ode
@@ -345,24 +347,24 @@ def simulate_systems(weak_forms, initial_states, temporal_domain, spatial_domain
         derivative_orders = dict([(lbl, (0,0))for lbl in spatial_domains])
 
     weak_forms = sanitize_input(weak_forms, WeakFormulation)
-    print("simulate systems: {}".format([f.name for f in weak_forms]))
+    print(">>> simulate systems: {}".format([f.name for f in weak_forms]))
 
-    print(">>> parse weak formulations")
+    print("* parse weak formulations")
     canonical_equations = parse_weak_formulations(weak_forms)
 
-    print(">>> create state space system")
+    print("* create state space system")
     state_space_form = create_state_space(canonical_equations)
 
-    print(">>> derive initial conditions")
+    print("* derive initial conditions")
     q0 = project_on_bases(initial_states, canonical_equations)
 
-    print(">>> perform time step integration")
+    print("* perform time step integration")
     sim_domain, q = simulate_state_space(state_space_form, q0, temporal_domain, settings=settings)
 
-    print(">>> perform postprocessing")
+    print("* perform postprocessing")
     results = get_sim_results(sim_domain, spatial_domains, q, state_space_form, derivative_orders=derivative_orders)
 
-    print(">>> finished simulation")
+    print("* finished simulation")
     return results
 
 
@@ -440,7 +442,8 @@ def get_sim_results(temp_domain, spat_domains, weights, state_space, names=None,
         derivative_orders = dict([(name, (0, 0)) for name in names])
 
     results = []
-    for nm, lbl in zip(names, labels):
+    for nm, lbl in tqdm(zip(names, labels), file=sys.stdout,
+                        total=len(labels), desc="\t"*8):
         # if derivative_orders[n] is None derivatives of the
         # corresponding variables are not provided
         if derivative_orders[nm][0] is None:
@@ -884,7 +887,8 @@ def create_state_space(canonical_equations):
         canonical_equations = [canonical_equations]
 
     # check whether the formulations are compatible
-    for eq in canonical_equations:
+    for eq in tqdm(canonical_equations, file=sys.stdout,
+                   desc="\t- compatibility check" + "\t" * 2):
         for lbl, form in eq.dynamic_forms.items():
             coupling_order = form.max_temp_order
 
@@ -917,7 +921,8 @@ def create_state_space(canonical_equations):
                                    input_powers=set(),
                                    dim_u=0,
                                    input=None)
-    for eq in canonical_equations:
+    for eq in tqdm(canonical_equations, file=sys.stdout,
+                   desc="\t- convert to state space" + "\t"):
         dom_lbl = eq.dominant_lbl
         dom_form = eq.dominant_form
         dom_ss = dom_form.convert_to_state_space()
@@ -952,7 +957,8 @@ def create_state_space(canonical_equations):
 
     # build new state transition matrices A_p_k for corresponding powers p_k of the state vector
     a_matrices = {}
-    for p in state_space_props.powers:
+    for p in tqdm(state_space_props.powers, file=sys.stdout,
+                  desc="\t- build a matrices" + "\t" * 3):
         a_mat = np.zeros((state_space_props.size, state_space_props.size))
         for row_eq in canonical_equations:
             row_dom_lbl = row_eq.dominant_lbl
@@ -987,7 +993,8 @@ def create_state_space(canonical_equations):
 
     # build new state input matrices
     b_matrices = {}
-    for name, dom_ss in dominant_state_spaces.items():
+    for name, dom_ss in tqdm(dominant_state_spaces.items(), file=sys.stdout,
+                             desc="\t- build b matrices" + "\t" * 3):
         for order, order_mats in dom_ss.B.items():
             b_order_mats = b_matrices.get(order, {})
             for p, power_mat in order_mats.items():
@@ -1005,7 +1012,8 @@ def create_state_space(canonical_equations):
             b_matrices.update({order: b_order_mats})
 
     if any([ce.symbolic_terms for ce in canonical_equations]):
-        for ce in canonical_equations:
+        for ce in tqdm(canonical_equations, file=sys.stdout,
+                       desc="\t- lambdify symbolic terms" + "\t"):
             for sym_term in ce.symbolic_terms:
                 sym_term.finalize(ce.dominant_form.e_n_pb_inv,
                                   ce.dominant_lbl, new_name)
@@ -1218,8 +1226,7 @@ def parse_weak_formulations(weak_forms):
         List of :py:class:`.CanonicalEquation`'s.
     """
     canonical_equations = list()
-    for form in weak_forms:
-        print(">>> parse formulation {}".format(form.name))
+    for form in tqdm(weak_forms, file=sys.stdout, desc="\t"*8):
         ce = parse_weak_formulation(form)
         if ce.name in [ceq.name for ceq in canonical_equations]:
             raise ValueError(("Name {} for CanonicalEquation already assigned, "
@@ -1300,7 +1307,7 @@ def simulate_state_space(state_space, initial_state, temp_domain, settings=None)
 
     r.set_initial_value(q[0], t[0])
 
-    for t_step in temp_domain[1:]:
+    for t_step in tqdm(temp_domain[1:], file=sys.stdout, desc="\t" * 8):
         qn = r.integrate(t_step)
         if not r.successful():
             warnings.warn("*** Error: Simulation aborted at t={} ***".format(r.t))

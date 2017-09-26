@@ -7,6 +7,8 @@ import numpy as np
 import collections
 from copy import copy, deepcopy
 from numbers import Number
+import sys
+from tqdm import tqdm
 
 from scipy import integrate
 from scipy.linalg import block_diag
@@ -144,7 +146,7 @@ class Function(BaseFraction):
     For the implementation of new shape functions subclass this implementation
     or directly provide a callable *eval_handle* and callable
     *derivative_handles* if spatial derivatives are required for the
-    application. 
+    application.
     """
 
     # TODO: overload add and mul operators
@@ -607,7 +609,7 @@ class Base:
         """
         Hint that returns steps for scalar product calculation with elements of
         this base.
-        
+
         Note:
             Overwrite to implement custom functionality.
             For an example implementation see :py:class:`.Function`
@@ -1076,7 +1078,7 @@ def project_on_bases(states, canonical_equations):
             concatenated dominant bases from *canonical_equations*.
     """
     q0 = np.array([])
-    for ce in canonical_equations:
+    for ce in tqdm(canonical_equations, file=sys.stdout, desc="\t" * 8):
         lbl = ce.dominant_lbl
         q0 = np.hstack(tuple([q0] + [project_on_base(state, get_base(lbl))
                                      for state in states[ce.name]]))
