@@ -714,12 +714,21 @@ class SymbolicTerm(EquationTerm):
 
         self._lambdify_scale()
 
-        self._lambdify_term()
+        lamb_term = self._lambdify_term()
         if self.interpolate:
-            self._lambdify_interp_term()
+            term = self._lambdify_interp_term()
 
-        if not self.is_lumped and not self.is_integral_term:
-            self._lambdify_vectorized_term()
+        elif self.is_lumped:
+            term = lamb_term
+
+        elif not self.is_lumped and not self.is_integral_term:
+            term = self._lambdify_vectorized_term()
+        else:
+            raise NotImplementedError
+
+        return term, self.scale, (self._get_coef_vector()[0],
+                                  self._get_input_vector(),
+                                  self.t)
 
     def _get_input_vector(self):
         input_vector = np.empty((len(self.input_var_map),), dtype=sp.Basic)
@@ -848,6 +857,8 @@ class SymbolicTerm(EquationTerm):
             (coef_vector, self._get_input_vector(), self.t, self.z),
             self.approx_term, modules=self.modules)
 
+        return self.approx_term
+
     def _lambdify_interp_term(self):
         # provide scalar product matrix
         self.interp_matrix = calculate_scalar_product_matrix(
@@ -869,6 +880,9 @@ class SymbolicTerm(EquationTerm):
             (coef_vector, self._get_input_vector(), self.t),
             nonlin_coef_vector, modules=self.modules)
 
+
+        return sp.Matrix(self.interp_matrix) * nonlin_coef_vector
+
     def _lambdify_vectorized_term(self):
         vectorized_mul = sp.Matrix(np.ones(self.e_inv.shape[0]))
         for i, test_func in enumerate(self.test_base):
@@ -877,6 +891,8 @@ class SymbolicTerm(EquationTerm):
         self._lambdified_vect_mul = lambdify(
             (self._get_coef_vector()[0], self._get_input_vector(), self.t),
             vectorized_mul, modules=self.modules)
+
+        return vectorized_mul
 
     def _lambdify_scale(self):
         self._lambdified_scale = lambdify((self._get_input_vector(), self.t),

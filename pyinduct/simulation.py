@@ -12,6 +12,8 @@ import sys
 from tqdm import tqdm
 
 import numpy as np
+import sympy as sp
+from sympy.utilities.lambdify import lambdify
 from scipy.integrate import ode
 from scipy.interpolate import interp1d
 from scipy.linalg import block_diag
@@ -286,7 +288,7 @@ class StateSpace(object):
                 q_t = q_t + b_mat @ np.power(u, p)
 
         if self.f_handle:
-            q_t = q_t + self.f_handle(_q, u, _t)
+            q_t = q_t + self.f_handle(_q, u, _t).flatten()
 
         return q_t
 
@@ -1012,27 +1014,52 @@ def create_state_space(canonical_equations):
             b_matrices.update({order: b_order_mats})
 
     if any([ce.symbolic_terms for ce in canonical_equations]):
+        res = sp.Matrix(np.zeros(state_space_props.size))
+        coef_vec = None
+        input_vec = None
         for ce in tqdm(canonical_equations, file=sys.stdout,
                        desc="\t- lambdify symbolic terms" + "\t"):
-            for sym_term in ce.symbolic_terms:
-                sym_term.finalize(ce.dominant_form.e_n_pb_inv,
-                                  ce.dominant_lbl, new_name)
+            idx_a = (state_space_props.parts[ce.dominant_lbl]["start"] +
+                     state_space_props.parts[ce.dominant_lbl]["orig_size"] *
+                     state_space_props.parts[ce.dominant_lbl]["order"])
+            idx_b = (idx_a +
+                     state_space_props.parts[ce.dominant_lbl]["orig_size"])
+            for i, sym_term in enumerate(ce.symbolic_terms):
+                term, scale, args = sym_term.finalize(
+                    ce.dominant_form.e_n_pb_inv, ce.dominant_lbl, new_name)
+                res[idx_a: idx_b, 0] += term * scale
 
-        def _stack_symbolic_terms(weights, input, time):
-            res = np.zeros(state_space_props.size)
-            for ce in canonical_equations:
-                idx_a = (state_space_props.parts[ce.dominant_lbl]["start"] +
-                         state_space_props.parts[ce.dominant_lbl]["orig_size"] *
-                         state_space_props.parts[ce.dominant_lbl]["order"])
-                idx_b = (idx_a +
-                         state_space_props.parts[ce.dominant_lbl]["orig_size"])
+                if input_vec is None:
+                    if args[1] is not None:
+                        input_vec = args[1]
+                elif len(input_vec) < len(args[1]):
+                    input_vec = args[1]
+                elif len(input_vec) == len(args[1]):
+                    if any([iv != arg for iv, arg
+                            in zip(input_vec, args[1])]):
+                        raise ValueError("Check this!")
+                coef_vec = args[0]
+                t = args[2]
+            res[idx_a: idx_b, 0] = -ce.dominant_form.e_n_pb_inv * res[idx_a: idx_b, 0]
 
-                for term in ce.symbolic_terms:
-                    res[idx_a: idx_b] += term(weights, input, time)
+        _lambdified_symbolic_terms = lambdify(
+            (coef_vec, input_vec, t), res, modules="numpy")
 
-            return res
+        # def _stack_symbolic_terms(weights, input, time):
+        #     res = np.zeros(state_space_props.size)
+        #     for ce in canonical_equations:
+        #         idx_a = (state_space_props.parts[ce.dominant_lbl]["start"] +
+        #                  state_space_props.parts[ce.dominant_lbl]["orig_size"] *
+        #                  state_space_props.parts[ce.dominant_lbl]["order"])
+        #         idx_b = (idx_a +
+        #                  state_space_props.parts[ce.dominant_lbl]["orig_size"])
+        #
+        #         for term in ce.symbolic_terms:
+        #             res[idx_a: idx_b] += term(weights, input, time)
+        #
+        #     return res
 
-        f_handle = _stack_symbolic_terms
+        f_handle = _lambdified_symbolic_terms
 
     else:
         f_handle = None
