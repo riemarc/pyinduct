@@ -718,6 +718,9 @@ class SymbolicTerm(EquationTerm):
         if self.interpolate:
             self._lambdify_interp_term()
 
+        if not self.is_lumped and not self.is_integral_term:
+            self._lambdify_vectorized_term()
+
     def _get_input_vector(self):
         input_vector = np.empty((len(self.input_var_map),), dtype=sp.Basic)
         for idx, symb in self.input_var_map.items():
@@ -866,6 +869,15 @@ class SymbolicTerm(EquationTerm):
             (coef_vector, self._get_input_vector(), self.t),
             nonlin_coef_vector, modules=self.modules)
 
+    def _lambdify_vectorized_term(self):
+        vectorized_mul = sp.Matrix(np.ones(self.e_inv.shape[0]))
+        for i, test_func in enumerate(self.test_base):
+            vectorized_mul[i] = self.approx_term * test_func(self.test_location)
+
+        self._lambdified_vect_mul = lambdify(
+            (self._get_coef_vector()[0], self._get_input_vector(), self.t),
+            vectorized_mul, modules=self.modules)
+
     def _lambdify_scale(self):
         self._lambdified_scale = lambdify((self._get_input_vector(), self.t),
                                           self.scale, modules=self.modules)
@@ -971,10 +983,8 @@ class SymbolicTerm(EquationTerm):
             [t_func for t_func in self.test_base])
 
     def _multiply(self, weights, input, time):
-
-        return np.array([(self._lambdified_term(weights, input, time, None) *
-                          test_func(self.test_location))
-                         for test_func in self.test_base])
+        res = np.squeeze(self._lambdified_vect_mul(weights, input, time), 1)
+        return res
 
     def _scale(self, input, time):
         return self._lambdified_scale(input, time)
