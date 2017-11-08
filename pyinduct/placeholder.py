@@ -707,6 +707,15 @@ class SymbolicTerm(EquationTerm):
         self.source_base = get_base(src_lbl)
         self.dom_base = get_base(dom_lbl)
 
+        def mat_vec_mul(mat, vec):
+            return np.squeeze(mat @ vec, 1)
+
+        def vector(vec):
+            return np.squeeze(vec, 1)
+
+        mvm = implemented_function(sp.Function("_ph_dummy_mvm"), mat_vec_mul)
+        vect = implemented_function(sp.Function("_dummy_vec"), vector)
+
         if isinstance(self.source_base, StackedBase):
             self.base_stack = list(self.source_base._info)
         else:
@@ -716,13 +725,14 @@ class SymbolicTerm(EquationTerm):
 
         lamb_term = self._lambdify_term()
         if self.interpolate:
-            term = self._lambdify_interp_term()
+            mat, ve = self._lambdify_interp_term()
+            term = mvm(mat, ve)
 
         elif self.is_lumped:
-            term = lamb_term
+            term = vect(lamb_term)
 
         elif not self.is_lumped and not self.is_integral_term:
-            term = self._lambdify_vectorized_term()
+            term = vect(self._lambdify_vectorized_term())
         else:
             raise NotImplementedError
 
@@ -881,7 +891,7 @@ class SymbolicTerm(EquationTerm):
             nonlin_coef_vector, modules=self.modules)
 
 
-        return sp.Matrix(self.interp_matrix) * nonlin_coef_vector
+        return sp.Matrix(self.interp_matrix), nonlin_coef_vector
 
     def _lambdify_vectorized_term(self):
         vectorized_mul = sp.Matrix(np.ones(self.e_inv.shape[0]))
