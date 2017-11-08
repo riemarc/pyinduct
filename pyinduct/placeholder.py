@@ -839,7 +839,7 @@ class SymbolicTerm(EquationTerm):
                         dummy = sp.symbols("_d" * tord + str(coef))
                         c_subs_list.append(
                             (der_func, dummy))
-                self.approx_term = self.approx_term.subs(c_subs_list)
+                self.approx_term = self.approx_term.subs(c_subs_list).n()
 
         self._lambdified_term = lambdify(
             (coef_vector, self._get_input_vector(), self.t, self.z),
