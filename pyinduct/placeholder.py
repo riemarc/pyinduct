@@ -721,26 +721,26 @@ class SymbolicTerm(EquationTerm):
         else:
             self.base_stack = [src_lbl]
 
-        self._lambdify_scale()
+        scale = self._get_scale()
 
-        lamb_term = self._lambdify_term()
+        lamb_term = self._get_term()
         if self.interpolate:
-            mat, ve = self._lambdify_interp_term()
+            mat, ve = self._get_vectorized_interp_term()
             term = mvm(mat, ve)
 
         elif self.is_lumped:
             term = vect(lamb_term)
 
         elif not self.is_lumped and not self.is_integral_term:
-            term = vect(self._lambdify_vectorized_multiplicated_term())
+            term = vect(self._get_vectorized_multiplicated_term())
 
         elif self.is_integral_term:
-            term = vect(self._lambdify_vectorized_integrated_term())
+            term = vect(self._get_vectorized_integrated_term())
 
         else:
             raise NotImplementedError
 
-        return term, self.scale, (self._get_coef_vector()[0],
+        return term, scale, (self._get_coef_vector()[0],
                                   self._get_input_vector(),
                                   self.t)
 
@@ -777,7 +777,7 @@ class SymbolicTerm(EquationTerm):
 
         return coef_vector, coefficients
 
-    def _lambdify_term(self):
+    def _get_term(self):
 
         self.approx_term = self.term
         coef_vector, coefficients = self._get_coef_vector()
@@ -873,7 +873,7 @@ class SymbolicTerm(EquationTerm):
 
         return self.approx_term
 
-    def _lambdify_interp_term(self):
+    def _get_vectorized_interp_term(self):
         # provide scalar product matrix
         self.interp_matrix = calculate_scalar_product_matrix(
             dot_product_l2, self.test_base, self.dom_base)
@@ -890,24 +890,16 @@ class SymbolicTerm(EquationTerm):
                            if not coef.endswith("_{}".format(i))]
             nonlin_coef_vector[i] = interp_approx_term.subs(c_subs_list)
 
-        self._lambdified_nonlin_cvec = lambdify(
-            (coef_vector, self._get_input_vector(), self.t),
-            nonlin_coef_vector, modules=self.modules)
-
         return sp.Matrix(self.interp_matrix), nonlin_coef_vector
 
-    def _lambdify_vectorized_multiplicated_term(self):
+    def _get_vectorized_multiplicated_term(self):
         vectorized_mul = sp.Matrix(np.ones(self.e_inv.shape[0]))
         for i, test_func in enumerate(self.test_base):
             vectorized_mul[i] = self.approx_term * test_func(self.test_location)
 
-        self._lambdified_vect_mul = lambdify(
-            (self._get_coef_vector()[0], self._get_input_vector(), self.t),
-            vectorized_mul, modules=self.modules)
-
         return vectorized_mul
 
-    def _lambdify_vectorized_integrated_term(self):
+    def _get_vectorized_integrated_term(self):
 
         def integral(weights, input, time):
             def handle(z):
@@ -925,15 +917,10 @@ class SymbolicTerm(EquationTerm):
             self._get_coef_vector()[0], self._get_input_vector(), self.t
         )
 
-        self._lambdified_vect_int = lambdify(
-            (self._get_coef_vector()[0], self._get_input_vector(), self.t),
-            vectorized_int, modules=self.modules)
-
         return vectorized_int
 
-    def _lambdify_scale(self):
-        self._lambdified_scale = lambdify((self._get_input_vector(), self.t),
-                                          self.scale, modules=self.modules)
+    def _get_scale(self):
+        return self.scale
 
     def _parse_expr(self, expr):
         info = dict()
@@ -998,49 +985,6 @@ class SymbolicTerm(EquationTerm):
         for key, val in self.scale_info.items():
             print("{}: {}".format(key, val))
         print("\n")
-
-    def __call__(self, weights, input, time):
-        res = np.zeros(self.e_inv.shape[0])
-
-        if self.is_integral_term:
-            if self.interpolate:
-                res += self._interpolate(weights, input, time)
-            else:
-                res += self._integrate(weights, input, time)
-
-        elif self.is_lumped:
-            res += self._lambdified_term(weights, input, time, None)
-
-        else:
-            res += self._multiply(weights, input, time)
-
-        if self.scale != 1:
-            res *= self._scale(input, time)
-
-        return -self.e_inv @ res
-
-    def _interpolate(self, weights, input, time):
-        return np.squeeze(np.dot(
-            self.interp_matrix,
-            self._lambdified_nonlin_cvec(weights, input, time)), 1)
-
-    def _integrate(self, weights, input, time):
-
-        def handle(z):
-            return self._lambdified_term(weights, input, time, z)
-
-        func = Function(handle, domain=self.test_base[0].domain)
-
-        return self.test_base.scalar_product_hint()[0](
-            [func for _ in self.test_base],
-            [t_func for t_func in self.test_base])
-
-    def _multiply(self, weights, input, time):
-        res = np.squeeze(self._lambdified_vect_mul(weights, input, time), 1)
-        return res
-
-    def _scale(self, input, time):
-        return self._lambdified_scale(input, time)
 
 
 def _evaluate_placeholder(placeholder):
