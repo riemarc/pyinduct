@@ -732,7 +732,11 @@ class SymbolicTerm(EquationTerm):
             term = vect(lamb_term)
 
         elif not self.is_lumped and not self.is_integral_term:
-            term = vect(self._lambdify_vectorized_term())
+            term = vect(self._lambdify_vectorized_multiplicated_term())
+
+        elif self.is_integral_term:
+            term = vect(self._lambdify_vectorized_integrated_term())
+
         else:
             raise NotImplementedError
 
@@ -890,10 +894,9 @@ class SymbolicTerm(EquationTerm):
             (coef_vector, self._get_input_vector(), self.t),
             nonlin_coef_vector, modules=self.modules)
 
-
         return sp.Matrix(self.interp_matrix), nonlin_coef_vector
 
-    def _lambdify_vectorized_term(self):
+    def _lambdify_vectorized_multiplicated_term(self):
         vectorized_mul = sp.Matrix(np.ones(self.e_inv.shape[0]))
         for i, test_func in enumerate(self.test_base):
             vectorized_mul[i] = self.approx_term * test_func(self.test_location)
@@ -903,6 +906,30 @@ class SymbolicTerm(EquationTerm):
             vectorized_mul, modules=self.modules)
 
         return vectorized_mul
+
+    def _lambdify_vectorized_integrated_term(self):
+
+        def integral(weights, input, time):
+            def handle(z):
+                return self._lambdified_term(weights, input, time, z)
+
+            func = Function(handle, domain=self.test_base[0].domain)
+
+            return np.transpose(np.atleast_2d(
+                self.test_base.scalar_product_hint()[0](
+                    [func for _ in self.test_base],
+                    [t_func for t_func in self.test_base])))
+
+        vectorized_int = implemented_function(
+            sp.Function("dummy_integral_" + str(hash(self))[1:]), integral)(
+            self._get_coef_vector()[0], self._get_input_vector(), self.t
+        )
+
+        self._lambdified_vect_int = lambdify(
+            (self._get_coef_vector()[0], self._get_input_vector(), self.t),
+            vectorized_int, modules=self.modules)
+
+        return vectorized_int
 
     def _lambdify_scale(self):
         self._lambdified_scale = lambdify((self._get_input_vector(), self.t),

@@ -1014,7 +1014,10 @@ def create_state_space(canonical_equations):
             b_matrices.update({order: b_order_mats})
 
     def mat_vec_mul(mat, vec):
-        return mat @ vec
+        try:
+            return mat @ vec
+        except TypeError:
+            return mat * vec
 
     mvm = implemented_function(sp.Function("_sim_dummy_mvm"), mat_vec_mul)
 
@@ -1039,30 +1042,39 @@ def create_state_space(canonical_equations):
                                _stack_symbolic_terms)
 
     if any([ce.symbolic_terms for ce in canonical_equations]):
-        res = sp.Matrix(np.zeros(state_space_props.size))
         coef_vec = None
         input_vec = None
         sym_term_stack = list()
         for ce in tqdm(canonical_equations, file=sys.stdout,
                        desc="\t- lambdify symbolic terms" + "\t"):
             equation = 0
-            for i, sym_term in enumerate(ce.symbolic_terms):
-                term, scale, args = sym_term.finalize(
-                    ce.dominant_form.e_n_pb_inv, ce.dominant_lbl, new_name)
-                equation += term * scale
+            if not ce.symbolic_terms:
+                def dummy_vector(dummy_var):
+                    return np.zeros(ce.dominant_form.e_n_pb_inv.shape[0])
 
-                if input_vec is None:
-                    if args[1] is not None:
+                dummy_var = sp.symbols("t")
+                sym_term_stack.append(implemented_function(
+                    sp.Function("dummy_zero_vector"), dummy_vector)(dummy_var))
+
+            else:
+                for i, sym_term in enumerate(ce.symbolic_terms):
+                    term, scale, args = sym_term.finalize(
+                        ce.dominant_form.e_n_pb_inv, ce.dominant_lbl, new_name)
+                    equation += term * scale
+
+                    if input_vec is None:
+                        if args[1] is not None:
+                            input_vec = args[1]
+                    elif len(input_vec) < len(args[1]):
                         input_vec = args[1]
-                elif len(input_vec) < len(args[1]):
-                    input_vec = args[1]
-                elif len(input_vec) == len(args[1]):
-                    if any([iv != arg for iv, arg
-                            in zip(input_vec, args[1])]):
-                        raise ValueError("Check this!")
-                coef_vec = args[0]
-                t = args[2]
-            sym_term_stack.append(-mvm(ce.dominant_form.e_n_pb_inv, equation))
+                    elif len(input_vec) == len(args[1]):
+                        if any([iv != arg for iv, arg
+                                in zip(input_vec, args[1])]):
+                            raise ValueError("Check this!")
+                    coef_vec = args[0]
+                    t = args[2]
+
+                sym_term_stack.append(-mvm(ce.dominant_form.e_n_pb_inv, equation))
 
         temp = sst(*sym_term_stack)
 
