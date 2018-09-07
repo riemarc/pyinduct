@@ -14,9 +14,7 @@ class ImpulseExcitation(pi.SimulationInput):
 
     def _calc_output(self, **kwargs):
         t = kwargs["time"]
-        a = 1/20
-        value = 100 / (a * np.sqrt(np.pi)) * np.exp(-((t-1)/a)**2)
-        return dict(output=value)
+        return dict(output=0 if t < 1 else 1 if t < 1.1 else 0)
 
 
 def calc_eigen(order, l_value, EI, mu, der_order=4, debug=False):
@@ -60,7 +58,7 @@ def calc_eigen(order, l_value, EI, mu, der_order=4, debug=False):
         except FloatingPointError:
             return 1
 
-    grid = np.linspace(-1, 30, num=1000)
+    grid = np.linspace(-1, 30 * order / 7, num=1000)
     roots = pi.find_roots(char_wrapper, grid, n_roots=order)
     if debug:
         pi.visualize_roots(roots, grid, char_func)
@@ -102,45 +100,47 @@ def calc_eigen(order, l_value, EI, mu, der_order=4, debug=False):
     return normed_eig_base
 
 
-def run():
-    sys_name = 'euler bernoulli beam'
+def buil_stationary_base(spat_domain):
+    """
+    Build base which consists only of one function which is the stationary
+    solution for a constant input.
 
-    # domains
-    spat_domain = pi.Domain(bounds=(0, 1), num=101)
-    temp_domain = pi.Domain(bounds=(0, 10), num=1000)
+    Args:
+        spat_domain (:py:class:`.Domain`): Spatial domain
 
-    if 0:
-        # physical properties
-        height = .1  # [m]
-        width = .1  # [m]
-        e_module = 210e9  # [Pa]
-        EI = 210e9 * (width * height**3)/12
-        mu = 1e6  # [kg/m]
-    else:
-        # normed properties
-        EI = 1e0
-        mu = 1e0
+    Returns:
+        :py:class:`.Base`
+    """
+    z = sp.Symbol("z")
+    l = spat_domain.bounds[1] - spat_domain.bounds[0]
+    stat_sol = z ** 3 / 6 - z ** 2 / 2 * l
+    funcs = [sp.lambdify(z, sp.diff(stat_sol, z, i)) for i in range(5)]
+    stat_base = pi.Base([pi.Function(
+        funcs[0],domain=spat_domain.bounds, derivative_handles=funcs[1:])])
 
-    # define approximation bases
-    if 0:
-        # somehow, fem is still problematic
-        approx_base = pi.LagrangeNthOrder.cure_interval(spat_domain,
-                                                        order=4)
-        approx_lbl = "complete_base"
-    else:
-        approx_base = calc_eigen(7, 1, EI, mu)
-        approx_lbl = "eig_base"
+    return stat_base
 
-    pi.register_base(approx_lbl, approx_base)
 
-    # system definition
+def build_weak_formulation(base_lbl, input, EI, mu, spat_domain):
+    """
+    Weak formulation of the system, see https://pyinduct.readthedocs.io/en/latest/examples/euler_bernoulli_beam.html.
 
-    u = ImpulseExcitation("Hammer")
-    x = pi.FieldVariable(approx_lbl)
-    phi = pi.TestFunction(approx_lbl)
+    Args:
+        base_lbl (str): Label of the approximation base.
+            This base is also used as test base.
+        input (:py:class:`.SimulationInput`): System input
+        EI (Number): System parameter
+        mu (Number): System parameter
+        spat_domain (:py:class:`.Domain`): Spatial domain
+
+    Returns:
+        :py:class:`.WeakFormulation`
+    """
+    x = pi.FieldVariable(base_lbl)
+    phi = pi.TestFunction(base_lbl)
 
     weak_form = pi.WeakFormulation([
-        pi.ScalarTerm(pi.Product(pi.Input(u),
+        pi.ScalarTerm(pi.Product(pi.Input(input),
                                  phi(1)), scale=EI),
         pi.ScalarTerm(pi.Product(x.derive(spat_order=3)(0),
                                  phi(0)), scale=-EI),
@@ -161,36 +161,53 @@ def run():
         pi.IntegralTerm(pi.Product(x.derive(temp_order=2), phi),
                         spat_domain.bounds,
                         scale=mu),
-    ], name=sys_name)
+    ], name=base_lbl)
+
+    return weak_form
+
+
+def run():
+    # domains
+    spat_domain = pi.Domain(bounds=(0, 1), num=101)
+    temp_domain = pi.Domain(bounds=(0, 20), num=1000)
+
+    # normed properties
+    EI = 1e0
+    mu = 1e0
+
+    # set up bases
+    stat_lbl = "stationary_base"
+    eigen_lbl = "eigen_base"
+    stat_base = buil_stationary_base(spat_domain)
+    eigen_base = calc_eigen(7, 1, EI, mu)
+    pi.register_base(eigen_lbl, eigen_base)
+    pi.register_base(stat_lbl, stat_base)
+    pi.visualize_functions(eigen_base)
+    pi.visualize_functions(stat_base)
+
+    # build weak formulations
+    u = ImpulseExcitation("Hammer")
+    eigen_wf = build_weak_formulation(eigen_lbl, u, EI, mu, spat_domain)
+    stat_wf = build_weak_formulation(stat_lbl, u, EI, mu, spat_domain)
+
 
     # simulation
-
     init_form = pi.Function.from_constant(0)
     init_form_dt = pi.Function.from_constant(0)
-    initial_conditions = [init_form, init_form_dt]
+    initial_cond = [init_form, init_form_dt]
+    spat_domains = {eigen_lbl: spat_domain, stat_lbl: spat_domain}
+    init_conds = {eigen_lbl: initial_cond, stat_lbl: initial_cond}
+    eval_data = pi.simulate_systems([eigen_wf, stat_wf], init_conds, temp_domain, spat_domains)
 
-    with np.errstate(under="ignore"):
-        eval_data = pi.simulate_system(weak_form,
-                                       initial_conditions,
-                                       temp_domain,
-                                       spat_domain,
-                                       settings=dict(name="vode",
-                                                     method="bdf",
-                                                     order=5,
-                                                     nsteps=1e8,
-                                                     max_step=temp_domain.step))
-
-    # visualization
-
-    # input trajectory
+    # visualize data
     u_data = u.get_results(eval_data[0].input_data[0], as_eval_data=True)
     plt.plot(u_data.input_data[0], u_data.output_data)
-
-    win1 = pi.PgAnimatedPlot(eval_data, labels=dict(left='x(z,t)', bottom='z'))
+    plots = list()
+    plots.append(pi.PgAnimatedPlot(eval_data, labels=dict(left='x(z,t)', bottom='z')))
+    plots.append(pi.MplSlicePlot(eval_data, spatial_point=1))
     pi.show()
 
-    pi.tear_down((approx_lbl,),
-                 (win1, ))
+    pi.tear_down((stat_lbl, eigen_lbl), plots)
 
 
 if __name__ == "__main__" or test_examples:
