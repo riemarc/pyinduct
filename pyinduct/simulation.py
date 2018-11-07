@@ -4,9 +4,11 @@ and functions for postprocessing of simulation data.
 """
 
 import warnings
+import sys
 from abc import ABCMeta, abstractmethod
 from collections import OrderedDict, Callable
 from copy import copy
+from tqdm import tqdm
 from itertools import chain
 
 import numpy as np
@@ -1288,7 +1290,8 @@ def simulate_state_space(rhs, initial_state, temp_domain, settings=None):
 
     r.set_initial_value(q[0], t[0])
 
-    for t_step in temp_domain[1:]:
+    for t_step in tqdm(temp_domain[1:],
+                       desc=">>> simulate system", file=sys.stdout):
         qn = r.integrate(t_step)
         if not r.successful():
             warnings.warn("*** Error: Simulation aborted at t={} ***".format(r.t))
@@ -1296,6 +1299,8 @@ def simulate_state_space(rhs, initial_state, temp_domain, settings=None):
 
         t.append(r.t)
         q.append(qn)
+
+    print("done!")
 
     # create results
     q = np.array(q)
