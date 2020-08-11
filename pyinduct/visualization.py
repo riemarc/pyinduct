@@ -31,7 +31,7 @@ from .tests import show_plots
 
 __all__ = ["show", "tear_down", "surface_plot",
            "PgAnimatedPlot", "PgSurfacePlot",
-           "MplSurfacePlot", "MplSlicePlot",
+           "MplSurfacePlot", "MplSlicePlot", "MplPzMap",
            "create_colormap", "visualize_roots", "visualize_functions"]
 
 colors = ["g", "c", "m", "b", "y", "k", "w", "r"]
@@ -650,7 +650,7 @@ class MplSurfacePlot(DataPlot):
             ax.plot_surface(xx, yy, z, rstride=2, cstride=2, cmap=plt.cm.cool, antialiased=False)
 
 
-class MplSlicePlot(PgDataPlot):
+class MplSlicePlot(DataPlot):
     """
     Get list (eval_data_list) of ut.EvalData objects and plot the temporal/spatial slice, by spatial_point/time_point,
     from each ut.EvalData object, in one plot.
@@ -698,6 +698,43 @@ class MplSlicePlot(PgDataPlot):
 
         if show_leg:
             plt.legend(loc=legend_location)
+
+
+
+
+class MplPzMap(DataPlot):
+    pzmap_markers = ['x', 'o', 's', '^', '*', 'D']
+    pzmap_marker_facecolor = ["k", "none", "none", "none", "none", "none", ]
+    pzmap_marker_edgecolor = ["k", "k", "k", "k", "k", "k"]
+
+    def __init__(self, *args, size=None,
+                 labels=(r"$\mathrm{Re}(\lambda)$", r"$\mathrm{Im}(\lambda)$")):
+
+        self.fig = plt.figure()
+        for i, arg in enumerate(args):
+            kwargs = dict(marker=self.pzmap_markers[i],
+                          edgecolor=self.pzmap_marker_edgecolor[i],
+                          linewidth=1,
+                          facecolor=self.pzmap_marker_facecolor[i])
+            if size is not None:
+                if isinstance(size, Number):
+                    kwargs.update(s=size)
+                else:
+                    kwargs.update(s=size[i])
+            plt.scatter(np.real(arg), np.imag(arg), **kwargs)
+
+        plt.xlabel(labels[0])
+        plt.ylabel(labels[1])
+        plt.grid()
+
+        x_range = plt.xlim()[1] - plt.xlim()[1]
+        if x_range < 1:
+            plt.xlim(plt.xlim()[0] - (1 - x_range) / 2,
+                     plt.xlim()[1] + (1 - x_range) / 2)
+        y_range = plt.ylim()[1] - plt.ylim()[1]
+        if y_range < 1:
+            plt.ylim(plt.ylim()[0] - (1 - y_range) / 2,
+                     plt.ylim()[1] + (1 - y_range) / 2)
 
 
 def mpl_activate_latex():

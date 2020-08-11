@@ -163,3 +163,19 @@ class PlotTestCase(unittest.TestCase):
                          legend_label=['1', '2', '3', '4', '5', '6'])
         if show_plots:
             pi.show(show_pg=False)
+
+
+class PzMapTestCase(unittest.TestCase):
+    def setUp(self):
+        self.poles1 = np.array([-1, -2, -3])
+        self.poles2 = self.poles1 * 1j + 1
+        self.poles3 = self.poles1 * 1j - 1
+        self.zeros1 = np.array([1, 2, 3])
+        self.zeros2 = self.zeros1 * 1j + 1
+        self.zeros3 = self.zeros1 * 1j - 1
+
+    def test_mpl_pzmap_plot(self):
+        vis.MplPzMap(self.poles1, self.zeros1,
+                     self.poles2, self.zeros2,
+                     self.poles3, self.zeros3, size=[20, 80]*3)
+        pi.show(show_pg=False)
