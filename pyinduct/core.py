@@ -1935,7 +1935,7 @@ def generic_scalar_product(b1, b2=None, scalar_product=None):
 
 
 def find_roots(function, grid, n_roots=None, rtol=1.e-5, atol=1.e-8,
-               cmplx=False, sort_mode="norm"):
+               cmplx=False, sort_mode="norm", skip_fpe=False):
     r"""
     Searches *n_roots* roots of the *function* :math:`f(\boldsymbol{x})`
     on the given *grid* and checks them for uniqueness with aid of *rtol*.
@@ -1961,11 +1961,15 @@ def find_roots(function, grid, n_roots=None, rtol=1.e-5, atol=1.e-8,
         rtol: Tolerance to be exceeded for the difference of two roots
             to be unique: :math:`f(r1) - f(r2) > \textrm{rtol}` .
         atol: Absolute tolerance to zero: :math:`f(x^0) < \textrm{atol}` .
-        cmplx(bool): Set to True if the given *function* is complex valued.
-        sort_mode(str): Specify tho order in which the extracted roots shall be
+        cmplx (bool): Set to True if the given *function* is complex valued.
+        sort_mode (str): Specify tho order in which the extracted roots shall be
             sorted. Default "norm" sorts entries by their :math:`l_2` norm,
             while "component" will sort them in increasing order by every
             component.
+        skip_fpe (bool): If False: A `FloatingPointError` would stop not only the
+            evaluation of scipy.optimize.root` for the current grid point
+            but the complete execution. If True: Just the evaluation of the
+            current grid point will be skipped. Default: False.
 
     Return:
         numpy.ndarray of roots; sorted in the order they are returned by
@@ -1987,11 +1991,18 @@ def find_roots(function, grid, n_roots=None, rtol=1.e-5, atol=1.e-8,
 
     # iterate over test_values
     val = iter(values)
+    n_skip = 0
     while True:
         try:
             res = root(function, next(val), tol=atol)
-        except StopIteration:
-            break
+        except (StopIteration, FloatingPointError) as excpt:
+            if type(excpt) is StopIteration:
+                break
+            elif skip_fpe:
+                n_skip += 1
+                continue
+            else:
+                raise excpt
 
         if not res.success:
             continue
@@ -2027,6 +2038,10 @@ def find_roots(function, grid, n_roots=None, rtol=1.e-5, atol=1.e-8,
 
         roots.append(calculated_root)
         errors.append(error)
+
+    if n_skip > 0:
+        print(f"{n_skip} from {values.size} grid points skipped due "
+              f"to floating point error")
 
     if n_roots is None:
         n_roots = len(roots)

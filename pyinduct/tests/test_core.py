@@ -1687,6 +1687,14 @@ class FindRootsTestCase(unittest.TestCase):
                               rtol=self.rtol)
         # TODO check results!
 
+    def test_skip_floating_point_error(self):
+        grid = [np.linspace(-10, 10), np.linspace(-10, 10)]
+        with self.assertRaises(FloatingPointError):
+            pi.find_roots(self.char_eq, grid, cmplx=True)
+        roots = pi.find_roots(self.char_eq, grid, cmplx=True, skip_fpe=True)
+        self.assertTrue(any([np.isclose(r, -2.02875784+9.88579882e-17j)
+                             for r in roots]))
+
     def tearDown(self):
         pass
 
