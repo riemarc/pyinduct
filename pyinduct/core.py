@@ -1343,11 +1343,6 @@ def dot_product_l2(first, second):
     nonzero = domain_intersection(first.nonzero, second.nonzero)
     areas = domain_intersection(first.domain, nonzero)
 
-    # try some shortcuts
-    if first == second:
-        if hasattr(first, "quad_int"):
-            return first.quad_int()
-
     if 0:
         # TODO let Function Class handle product to gain more speed
         if type(first) is type(second):
