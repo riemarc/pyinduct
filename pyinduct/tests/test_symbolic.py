@@ -187,7 +187,7 @@ class EvaluateIntegralTestCase(unittest.TestCase):
         expr = f1_pi * f1_py * f2_pi * f2_py * d_f1_pi * d_f2_pi * dd_f2_pi
         self.assertTrue(sy.evaluate_implemented_functions(expr)
                         ==
-                        -172800 * dd_f2_pi)
+                        -172800.0 * dd_f2_pi)
 
     def tearDown(self):
         sy.VariablePool.registry.clear()

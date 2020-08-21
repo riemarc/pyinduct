@@ -65,7 +65,7 @@ class VariablePool:
         return variable
 
     def _new_variables(self, names, dependencies, implementations, category, **kwargs):
-        assert isinstance(names, collections.Iterable)
+        assert isinstance(names, collections.abc.Iterable)
 
         if dependencies is None:
             dependencies = [None] * len(names)
