@@ -1,6 +1,9 @@
 import unittest
+from sympy.utilities.lambdify import implemented_function
+import numpy as np
 import sympy as sp
 import pyinduct.symbolic as sy
+from pyinduct.symbolic import _dummify_comp_conj_imp_funcs
 import pyinduct as pi
 
 
@@ -122,6 +125,11 @@ class EvaluateIntegralTestCase(unittest.TestCase):
         pair2 = (self.f2_pi, self.f2_py)
         self.check_all_combinations(pair1, pair2)
 
+    def test_complex(self):
+        # pair1 = (self.f1_py,)
+        # pair2 = (self.f2_py,)
+        print(sy.evaluate_integrals(sp.Integral(sp.conjugate(self.f1_py), (self.z, 0, 1))))
+
 
     def check_funcs(self, expr1, expr2, expr12, expr_p, expr_m):
         self.assertAlmostEqual(sy.evaluate_integrals(expr1), 2)
@@ -191,3 +199,57 @@ class EvaluateIntegralTestCase(unittest.TestCase):
 
     def tearDown(self):
         sy.VariablePool.registry.clear()
+
+
+class TestDummifyComplexConjugatedFunctions(unittest.TestCase):
+    def setUp(self):
+        def func1(z):
+            return 1j
+
+        def func2(z):
+            return z * 1j + z * 3
+        def d_func2(z):
+            return 1j + 3
+
+        self.z, self.t = sp.symbols("z t")
+        self.f1 = implemented_function(
+            sp.Function("f1", real=False), func1)(self.z)
+        func2_pi = pi.Function(func2, derivative_handles=[d_func2])
+        self.f2 = implemented_function(
+            sp.Function("f2", real=False), func2_pi)(self.z)
+        self.f3 = sp.exp(self.z)
+
+    def test_nonconjugated(self):
+        expr = self.f1 * self.f2
+        d_expr, _ = _dummify_comp_conj_imp_funcs(expr)
+        self.assertTrue(d_expr, expr)
+
+    def test_basics(self):
+        expr = np.conj(self.f2)
+        d_expr, _ = _dummify_comp_conj_imp_funcs(expr)
+        self.assertTrue(d_expr.subs(self.z, 0.4).evalf(), -0.4j + 1.2j)
+
+    def test_derivative(self):
+        expr = np.conj(self.f2.diff(self.z))
+        d_expr, rrd = _dummify_comp_conj_imp_funcs(expr)
+        self.assertTrue(d_expr.xreplace(rrd) == expr)
+        self.assertTrue(d_expr.subs(self.z, 0.4).evalf() == -1j + 3)
+
+    def check_dummify(self, expr):
+        value = expr.subs(self.z, 0.1).evalf()
+        d_expr, rrd = _dummify_comp_conj_imp_funcs(expr)
+        self.assertTrue(d_expr.xreplace(rrd) == expr)
+        d_value = d_expr.subs(self.z, 0.1).evalf()
+        self.assertTrue(value == d_value)
+        self.assertTrue(len(value.free_symbols) == 0)
+        self.assertTrue(len(value.atoms(sp.Symbol, sp.Function)) == 0)
+
+    def test_dummify(self):
+        expr = sp.conjugate(self.f2)
+        self.check_dummify(expr)
+        expr = sp.conjugate(self.f1 * self.f2 * self.f3)
+        self.check_dummify(expr)
+        expr = sp.conjugate(self.f1)
+        self.check_dummify(expr)
+        expr = sp.conjugate(self.f1 **2) * self.f2 ** self.f1
+        self.check_dummify(expr)

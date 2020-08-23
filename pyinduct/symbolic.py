@@ -105,6 +105,12 @@ global_variable_pool = VariablePool("GLOBAL")
 
 dummy_counter = 0
 
+def get_dummy_variable_name():
+    global dummy_counter
+    name = "_pyinduct_dummy{}".format(dummy_counter)
+    dummy_counter += 1
+
+    return name
 
 def new_dummy_variable(dependcy, implementation, **kwargs):
     global dummy_counter
@@ -400,8 +406,72 @@ def evaluate_implemented_functions(expression):
     return evaluated_expression.xreplace(reverse_replace)
 
 
+def _dummify_comp_conj_imp_funcs(expr):
+
+    def get_conj_compl_handle(handle):
+        def conj_compl(z):
+            return np.conj(handle(z))
+
+        return conj_compl
+
+    replace_dict = dict()
+    reverse_replace_dict = dict()
+    for cf in expr.atoms(sp.conjugate):
+        if len(cf.args) != 1:
+            raise NotImplementedError
+
+        df = cf.args[0]
+        if not isinstance(df, (sp.Function, sp.Derivative)):
+            continue
+
+        if isinstance(df, sp.Derivative):
+            der_order = get_derivative_order(df)
+        else:
+            der_order = 0
+
+        f = df.atoms(sp.Function)
+        if len(f) != 1:
+            raise NotImplementedError
+        f = f.pop()
+        if not hasattr(f, "_imp_"):
+            continue
+
+        if isinstance(f._imp_, pi.Function):
+            handles = ([get_conj_compl_handle(f._imp_.function_handle)] +
+                       [get_conj_compl_handle(h)
+                        for h in f._imp_.derivative_handles])
+            conj_imp = pi.Function(
+                eval_handle=handles[der_order],
+                domain=f._imp_.domain,
+                nonzero=f._imp_.nonzero,
+                derivative_handles=handles[der_order + 1:]
+            )
+
+        elif callable(f._imp_):
+            if der_order > 0:
+                raise NotImplementedError(
+                    "Only derivatives of a pyinduct.Function "
+                    "can be aquired.")
+            conj_imp = get_conj_compl_handle(f._imp_)
+
+        else:
+            raise NotImplementedError
+
+        if not len(f.free_symbols) == 1:
+            raise NotImplementedError
+
+        arg = f.free_symbols.pop()
+        dummy_f = sp.Function(get_dummy_variable_name(), real=f.is_real)
+        dummy_imp_f = implemented_function(dummy_f, conj_imp)(arg)
+        replace_dict.update({cf: dummy_imp_f})
+        reverse_replace_dict.update({dummy_imp_f: cf})
+
+    return expr.xreplace(replace_dict), reverse_replace_dict
+
+
 def evaluate_integrals(expression):
     expr_expand = expression.expand()
+    expr_expand, rr_comp_conj = _dummify_comp_conj_imp_funcs(expr_expand)
 
     replace_dict = dict()
     # print newline before progress
@@ -422,6 +492,9 @@ def evaluate_integrals(expression):
             replace_dict.update({integral: integral.doit()})
 
         elif isinstance(integrand, (sp.Mul, sp.Function, sp.Derivative)):
+
+            # dummify conjugation routine comes here
+            # integrand = _dummify_comp_conj_imp_funcs(integrand)
 
             constants = list()
             dependents = list()
@@ -527,7 +600,8 @@ def evaluate_integrals(expression):
         else:
             raise NotImplementedError
 
-    return expr_expand.xreplace(replace_dict)
+
+    return expr_expand.xreplace(replace_dict).xreplace(rr_comp_conj)
 
 
 def derive_first_order_representation(expression, funcs, input_,
