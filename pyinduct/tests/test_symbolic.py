@@ -1,4 +1,5 @@
 import unittest
+from scipy.integrate import quad
 from sympy.utilities.lambdify import implemented_function
 import numpy as np
 import sympy as sp
@@ -201,6 +202,49 @@ class EvaluateIntegralTestCase(unittest.TestCase):
         sy.VariablePool.registry.clear()
 
 
+class EvaluateComplexIntegralTestCase(unittest.TestCase):
+
+    def setUp(self):
+        def func1(z):
+            return 2j - z
+
+        def func2(z):
+            return np.sin(z) + 1j * np.cos(z)
+        def d_func2(z):
+            return np.cos(z) - 1j * np.sin(z)
+
+        self.z, self.t = sp.symbols("z t")
+        self.f1 = implemented_function(
+            sp.Function("f1", real=False), func1)(self.z)
+        func2_pi = pi.Function(func2, derivative_handles=[d_func2])
+        self.f2 = implemented_function(
+            sp.Function("f2", real=False), func2_pi)(self.z)
+        self.f3 = sp.exp(self.z) * self.z
+
+        long_int_res_real = quad(
+            lambda z: np.real(func1(z) * func2(z) * d_func2(z) * np.exp(z) * z),
+            0, np.pi / 2)[0]
+        long_int_res_imag = quad(
+            lambda z: np.imag(func1(z) * func2(z) * d_func2(z) * np.exp(z) * z),
+            0, np.pi / 2)[0]
+        self.long_int_res = long_int_res_real - 1j * long_int_res_imag
+
+    def test_integrate(self):
+        expr = sp.Integral(self.f1, (self.z, 0, 1))
+        self.assertAlmostEqual(sy.evaluate_integrals(expr), -0.5+2j)
+
+        expr = sp.Integral(self.f2, (self.z, 0, np.pi/2))
+        self.assertAlmostEqual(sy.evaluate_integrals(expr), 1+1j)
+
+        expr = sp.Integral(self.f2.diff(self.z), (self.z, 0, np.pi/2))
+        self.assertAlmostEqual(sy.evaluate_integrals(expr), 1-1j)
+
+        expr = sp.Integral(
+            sp.conjugate(self.f1 * self.f2 * self.f2.diff(self.z) * self.f3),
+            (self.z, 0, np.pi / 2))
+        self.assertAlmostEqual(sy.evaluate_integrals(expr), self.long_int_res)
+
+
 class TestDummifyComplexConjugatedFunctions(unittest.TestCase):
     def setUp(self):
         def func1(z):
@@ -218,6 +262,10 @@ class TestDummifyComplexConjugatedFunctions(unittest.TestCase):
         self.f2 = implemented_function(
             sp.Function("f2", real=False), func2_pi)(self.z)
         self.f3 = sp.exp(self.z)
+        func3_pi = pi.LambdifiedSympyExpression(
+            [self.f3], self.z, (0,5), complex_=True)
+        self.f3_lam = implemented_function(
+            sp.Function("f3_lam", real=False), func3_pi)(self.z)
 
     def test_nonconjugated(self):
         expr = self.f1 * self.f2
@@ -225,15 +273,26 @@ class TestDummifyComplexConjugatedFunctions(unittest.TestCase):
         self.assertTrue(d_expr, expr)
 
     def test_basics(self):
-        expr = np.conj(self.f2)
+        expr = sp.conjugate(self.f2)
         d_expr, _ = _dummify_comp_conj_imp_funcs(expr)
         self.assertTrue(d_expr.subs(self.z, 0.4).evalf(), -0.4j + 1.2j)
 
+        expr = sp.conjugate(self.f2.subs(self.z, 3))
+        d_expr, _ = _dummify_comp_conj_imp_funcs(expr)
+        self.assertAlmostEqual(d_expr.evalf(), 9-3j)
+
+        expr = sp.conjugate(self.f3_lam.subs(self.z, 3))
+        d_expr, _ = _dummify_comp_conj_imp_funcs(expr)
+        self.assertAlmostEqual(d_expr.evalf(), 20.0855369231877)
+
     def test_derivative(self):
-        expr = np.conj(self.f2.diff(self.z))
+        expr = sp.conjugate(self.f2.diff(self.z))
         d_expr, rrd = _dummify_comp_conj_imp_funcs(expr)
         self.assertTrue(d_expr.xreplace(rrd) == expr)
         self.assertTrue(d_expr.subs(self.z, 0.4).evalf() == -1j + 3)
+
+        with self.assertRaises(NotImplementedError):
+            _dummify_comp_conj_imp_funcs(sp.conjugate(self.f1.diff(self.z)))
 
     def check_dummify(self, expr):
         value = expr.subs(self.z, 0.1).evalf()

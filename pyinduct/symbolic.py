@@ -354,6 +354,8 @@ def simulate_system(rhs, funcs, init_conds, base_label, input_syms,
 
 
 def evaluate_implemented_functions(expression):
+    expression, rrd = _dummify_comp_conj_imp_funcs(
+        expression, unevaluated=False)
 
     der_replace_dict = dict()
     for der in expression.atoms(sp.Derivative):
@@ -403,10 +405,12 @@ def evaluate_implemented_functions(expression):
     # undo replace if the derivative could not be evaluated
     reverse_replace = dict([(v, k) for k, v in der_replace_dict.items()])
 
-    return evaluated_expression.xreplace(reverse_replace)
+    return evaluated_expression.xreplace(reverse_replace).xreplace(rrd)
 
 
-def _dummify_comp_conj_imp_funcs(expr):
+def _dummify_comp_conj_imp_funcs(expr, unevaluated=True, evaluated=True):
+    if not(unevaluated or evaluated):
+        raise ValueError
 
     def get_conj_compl_handle(handle):
         def conj_compl(z):
@@ -435,16 +439,28 @@ def _dummify_comp_conj_imp_funcs(expr):
         f = f.pop()
         if not hasattr(f, "_imp_"):
             continue
+        if not len(f.args) == 1:
+            raise NotImplementedError
+        arg = f.args[0]
+
+        if not evaluated and len(arg.free_symbols) == 0:
+            continue
+
+        if not unevaluated and len(arg.free_symbols) == 1:
+            continue
 
         if isinstance(f._imp_, pi.Function):
-            handles = ([get_conj_compl_handle(f._imp_.function_handle)] +
-                       [get_conj_compl_handle(h)
-                        for h in f._imp_.derivative_handles])
+            derivative = f._imp_.derive(der_order)
+            if isinstance(derivative, pi.Function):
+                domain = derivative.domain
+                nonzero = derivative.nonzero
+            else:
+                domain = f._imp_.domain
+                nonzero = f._imp_.nonzero
             conj_imp = pi.Function(
-                eval_handle=handles[der_order],
-                domain=f._imp_.domain,
-                nonzero=f._imp_.nonzero,
-                derivative_handles=handles[der_order + 1:]
+                eval_handle=get_conj_compl_handle(derivative),
+                domain=domain,
+                nonzero=nonzero,
             )
 
         elif callable(f._imp_):
@@ -456,11 +472,6 @@ def _dummify_comp_conj_imp_funcs(expr):
 
         else:
             raise NotImplementedError
-
-        if not len(f.free_symbols) == 1:
-            raise NotImplementedError
-
-        arg = f.free_symbols.pop()
         dummy_f = sp.Function(get_dummy_variable_name(), real=f.is_real)
         dummy_imp_f = implemented_function(dummy_f, conj_imp)(arg)
         replace_dict.update({cf: dummy_imp_f})
@@ -471,7 +482,8 @@ def _dummify_comp_conj_imp_funcs(expr):
 
 def evaluate_integrals(expression):
     expr_expand = expression.expand()
-    expr_expand, rr_comp_conj = _dummify_comp_conj_imp_funcs(expr_expand)
+    expr_expand, rr_comp_conj = _dummify_comp_conj_imp_funcs(
+        expr_expand, evaluated=False)
 
     replace_dict = dict()
     # print newline before progress
@@ -490,118 +502,116 @@ def evaluate_integrals(expression):
 
         if len(impl_funcs) == 0:
             replace_dict.update({integral: integral.doit()})
+            continue
 
-        elif isinstance(integrand, (sp.Mul, sp.Function, sp.Derivative)):
+        if not isinstance(integrand, (sp.Mul, sp.Function, sp.Derivative)):
+            raise NotImplementedError
 
-            # dummify conjugation routine comes here
-            # integrand = _dummify_comp_conj_imp_funcs(integrand)
-
-            constants = list()
-            dependents = list()
-            if isinstance(integrand, sp.Mul):
-                for arg in integrand.args:
-                    if dependent_var in arg.free_symbols:
-                        dependents.append(arg)
-
-                    else:
-                        constants.append(arg)
-
-            elif isinstance(integrand, (sp.Function, sp.Derivative)):
-                dependents.append(integrand)
-
-            else:
-                raise NotImplementedError
-
-            assert len(dependents) != 0
-            assert np.prod([sym for sym in constants + dependents]) == integrand
-
-            # collect numeric implementation of all
-            # python and pyinduct functions
-            py_funcs = list()
-            pi_funcs = list()
-            prove_integrand = sp.Integer(1)
-            domain = {(float(limit_a), float(limit_b))}
-            prove_replace = dict()
-            for func in dependents:
-
-                # check: maximal one free symbol
-                free_symbol = func.free_symbols
-                assert len(free_symbol) <= 1
-
-                # check: free symbol is the integration variable
-                if len(free_symbol) == 1:
-                    assert free_symbol.pop() == dependent_var
-
-                # if this term is not a function try to lambdify the function
-                # and implement the lambdified function
-                if len(func.atoms(sp.Function)) == 0:
-                    lam_func = sp.lambdify(dependent_var, func)
-                    orig_func = func
-                    func = new_dummy_variable((dependent_var,), lam_func)
-                    prove_replace.update({func: orig_func})
-
-                # check: only one sympy function in expression
-                _funcs = func.atoms(sp.Function)
-                assert len(_funcs) == 1
-
-                # check: only one dependent variable
-                _func = _funcs.pop()
-                assert len(_func.args) == 1
-
-                # check: correct dependent variable
-                assert _func.args[0] == dependent_var
-
-                # determine derivative order
-                if isinstance(func, sp.Derivative):
-                    der_order = get_derivative_order(func)
+        constants = list()
+        dependents = list()
+        if isinstance(integrand, sp.Mul):
+            for arg in integrand.args:
+                if dependent_var in arg.free_symbols:
+                    dependents.append(arg)
 
                 else:
-                    der_order = 0
+                    constants.append(arg)
 
-                # for a semantic check
-                prove_integrand *= sp.diff(_func, dependent_var, der_order)
-
-                # categorize _imp_ in python and pyinduct functions
-                implementation = _func._imp_
-                if isinstance(implementation, pi.Function):
-                    domain = domain_intersection(domain, implementation.nonzero)
-                    pi_funcs.append((implementation, int(der_order)))
-
-                elif callable(implementation):
-                    if der_order != 0:
-                        raise NotImplementedError(
-                            "Only derivatives of a pyinduct.Function "
-                            "can be aquired.")
-
-                    py_funcs.append(implementation)
-
-                else:
-                    raise NotImplementedError
-
-            # check if things will be processed correctly
-            prove_integrand = np.prod(
-                [sym for sym in constants + [prove_integrand]])
-            assert sp.Integral(
-                prove_integrand, (dependent_var, limit_a, limit_b)
-            ).xreplace(prove_replace) == integral
-
-            # function to integrate
-            def _integrand(z, py_funcs=py_funcs, pi_funcs=pi_funcs):
-                mul = ([f(z) for f in py_funcs] +
-                       [f.derive(ord)(z) for f, ord in pi_funcs])
-
-                return np.prod(mul)
-
-            _integral = integrate_function(_integrand, domain)[0]
-            result = np.prod([sym for sym in constants + [_integral]])
-
-            replace_dict.update({integral: result})
+        elif isinstance(integrand, (sp.Function, sp.Derivative)):
+            dependents.append(integrand)
 
         else:
             raise NotImplementedError
 
+        assert len(dependents) != 0
+        test_integrand = np.prod([sym for sym in constants + dependents])
+        assert test_integrand.equals(integrand)
 
-    return expr_expand.xreplace(replace_dict).xreplace(rr_comp_conj)
+        # collect numeric implementation of all
+        # python and pyinduct functions
+        py_funcs = list()
+        pi_funcs = list()
+        prove_integrand = sp.Integer(1)
+        domain = {(float(limit_a), float(limit_b))}
+        prove_replace = dict()
+        for func in dependents:
+
+            # check: maximal one free symbol
+            free_symbol = func.free_symbols
+            assert len(free_symbol) <= 1
+
+            # check: free symbol is the integration variable
+            if len(free_symbol) == 1:
+                assert free_symbol.pop() == dependent_var
+
+            # if this term is not a implemented function try to lambdify
+            # the function and implement the lambdified function
+            if len([f for f in func.atoms(sp.Function)
+                    if hasattr(f, "_imp_")]) == 0:
+                lam_func = sp.lambdify(dependent_var, func)
+                orig_func = func
+                func = new_dummy_variable((dependent_var,), lam_func)
+                prove_replace.update({func: orig_func})
+
+            # check: only one sympy function in expression
+            _funcs = func.atoms(sp.Function)
+            assert len(_funcs) == 1
+
+            # check: only one dependent variable
+            _func = _funcs.pop()
+            assert len(_func.args) == 1
+
+            # check: correct dependent variable
+            assert _func.args[0] == dependent_var
+
+            # determine derivative order
+            if isinstance(func, sp.Derivative):
+                der_order = get_derivative_order(func)
+
+            else:
+                der_order = 0
+
+            # for a semantic check
+            prove_integrand *= sp.diff(_func, dependent_var, der_order)
+
+            # categorize _imp_ in python and pyinduct functions
+            implementation = _func._imp_
+            if isinstance(implementation, pi.Function):
+                domain = domain_intersection(domain, implementation.nonzero)
+                pi_funcs.append((implementation, int(der_order)))
+
+            elif callable(implementation):
+                if der_order != 0:
+                    raise NotImplementedError(
+                        "Only derivatives of a pyinduct.Function "
+                        "can be aquired.")
+
+                py_funcs.append(implementation)
+
+        # check if things will be processed correctly
+        prove_integrand = np.prod(
+            [sym for sym in constants + [prove_integrand]])
+        assert sp.Integral(
+            prove_integrand, (dependent_var, limit_a, limit_b)
+        ).xreplace(prove_replace) == integral
+
+        # function to integrate
+        def _integrand(z, py_funcs=py_funcs, pi_funcs=pi_funcs):
+            mul = ([f(z) for f in py_funcs] +
+                   [f.derive(ord)(z) for f, ord in pi_funcs])
+
+            return np.prod(mul)
+
+        _integral = integrate_function(_integrand, domain)[0]
+        result = np.prod([sym for sym in constants + [_integral]])
+
+        replace_dict.update({integral: result})
+
+    expr_expand = expr_expand.xreplace(replace_dict)
+    if isinstance(expr_expand, (sp.Expr, sp.Matrix)):
+        expr_expand.xreplace(rr_comp_conj)
+
+    return expr_expand
 
 
 def derive_first_order_representation(expression, funcs, input_,
