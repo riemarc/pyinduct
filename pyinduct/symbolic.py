@@ -5,9 +5,10 @@ import sys
 from tqdm import tqdm
 import collections
 import pyinduct as pi
-from pyinduct.core import (domain_intersection, integrate_function,
-                           get_transformation_info, get_weight_transformation)
-from pyinduct.simulation import simulate_state_space, SimulationInput
+from pyinduct.core import domain_intersection, integrate_function, \
+    get_transformation_info, get_weight_transformation
+from pyinduct.simulation import simulate_state_space, SimulationInput,\
+    SimulationInputVector
 from sympy.utilities.lambdify import implemented_function
 
 __all__ = ["VariablePool"]
@@ -185,14 +186,23 @@ class SimulationInputWrapper:
     Wraps a :py:class:`.SimulationInput` into a callable, for further use
     as sympy implemented function (input function) and call during
     the simulation, see :py:class:`.simulate_system`.
+
+    Notes:
+        Works only with simulations inputs with an scalar numerical
+        representation. So for example not with
+        :py:class:`.SimulationInputVector`.
     """
     def __init__(self, sim_input):
         assert isinstance(sim_input, SimulationInput)
+        assert not isinstance(sim_input, SimulationInputVector)
 
         self._sim_input = sim_input
 
     def __call__(self, kwargs):
-        return self._sim_input(**kwargs)
+        res = self._sim_input(**kwargs)
+        if res.size != 1:
+            raise NotImplementedError
+        return res.flatten()[0]
 
 
 class Feedback(SimulationInput):
@@ -688,7 +698,8 @@ def derive_first_order_representation(expression, funcs, input_,
                 "E1": E1, "E0": E0, "G": G, "A": A, "B": B,
             })
 
-        return sp.Add(sp.MatMul(A, funcs, evaluate=False), sp.MatMul(B, input_, evaluate=False), evaluate=False)
+        return sp.Add(sp.MatMul(A, funcs, evaluate=False),
+                      sp.MatMul(B, input_, evaluate=False), evaluate=False)
 
 
 def implement_as_linear_ode(rhs, funcs, input_):

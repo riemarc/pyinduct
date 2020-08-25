@@ -92,9 +92,6 @@ rhs = sy.derive_first_order_representation(projections, weights, input_vector,
                                            mode="sympy.linear_eq_to_matrix")
 sy.pprint(rhs, "right hand side of the discretization", N)
 
-# use numpy.dot to speed up the simulation (compare / run without this line)
-rhs = sy.implement_as_linear_ode(rhs, weights, input_vector)
-
 # simulate
 _, q = sy.simulate_system(
     rhs, weights, init_samples, "fem_base", input_vector, t, temp_dom)
