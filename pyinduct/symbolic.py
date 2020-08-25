@@ -131,12 +131,29 @@ def new_dummy_variables(dependcies, implementations, **kwargs):
     return dummies
 
 
-def pprint(expr, description=None, n=None, limit=4, num_columns=180,
-           discard_small_values=False, tolerance=1e-6):
+def round_numbers(expr, digits):
     """
-    Wraps sympy.pprint, adds description to the console output
-    (if given) and the availability of hiding the output if
-    the approximation order exceeds a given limit.
+    Rounds each sympy.Number to *digits* digits.
+
+    Args:
+        expr (sp.Expr, sp.Eq, sp.Matrix): Object to manipulate
+        digits: Number of digits
+
+    Returns:
+        Rounded object
+    """
+    return expr.xreplace({n: round(n, digits) for n in expr.atoms(sp.Number)})
+
+
+def pprint(expr, description=None, n=None, limit=4, num_columns=180,
+           digits=None):
+    """
+    Wraps sympy.pprint, and adds:
+
+      * description to the console output (if given)
+      * the availability of hiding the output if the
+        approximation order exceeds a given limit
+      * round each sympy.Number in the expression to *digits* digits.
 
     Args:
         expr (sympy.Expr or array-like): Sympy expression or list of sympy
@@ -147,10 +164,8 @@ def pprint(expr, description=None, n=None, limit=4, num_columns=180,
         limit (int): Limit approximation order, default 4.
         num_columns (int): Kwarg :code:`num_columns` of sympy.pprint,
             default 180.
-        discard_small_values (bool): If true: round numbers < tolerance to 0.
-            Default: false.
-        tolerance (float): Applies when discard_small_values is true.
-            Default: 1e-6.
+        digits (int): Digits to round each sympy.Number occuring in *expr*,
+            default: None.
     """
     if n is not None and n > limit:
         return
@@ -159,9 +174,8 @@ def pprint(expr, description=None, n=None, limit=4, num_columns=180,
         if description is not None:
             print("\n>>> {}".format(description))
 
-        if discard_small_values:
-            # this is not clever or perfomant, but short
-            expr = sp.nsimplify(expr, tolerance=tolerance, rational=True).n()
+        if digits is not None:
+            expr = round_numbers(expr, digits)
 
         sp.pprint(expr, num_columns=num_columns)
 
