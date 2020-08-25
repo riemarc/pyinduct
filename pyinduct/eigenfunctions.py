@@ -567,26 +567,28 @@ class LambdifiedSympyExpression(Function):
         def ensure_numeric_scalar(scal):
             if isinstance(scal, Number):
                 return scal
-
             elif sp.N(scal).is_real:
                 return float(scal)
-
             else:
                 return complex(scal)
 
         def ensure_numeric_arguments(arg):
-            if hasattr(arg, "__iter__"):
+            if not hasattr(arg, "__iter__"):
+                return ensure_numeric_scalar(arg)
+            else:
                 if isinstance(arg, np.ndarray):
-                    arg = np.atleast_1d(arg)
-
-                if all([isinstance(num, Number) for num in arg]):
+                    if issubclass(arg.dtype.type, Number):
+                        return arg
+                    elif arg.shape == tuple():
+                        return complex(arg)
+                    else:
+                        arg = arg.flatten()
+                        return np.array(
+                            [ensure_numeric_scalar(num) for num in arg])
+                elif all([isinstance(num, Number) for num in arg]):
                     return arg
-
                 else:
                     return np.array([ensure_numeric_scalar(num) for num in arg])
-
-            else:
-                return ensure_numeric_scalar(arg)
 
         num_spat_symbol = implemented_function(
             "__dummy_spat_symbol" + str(hash(time.time())),
