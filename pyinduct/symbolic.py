@@ -188,7 +188,7 @@ class Feedback(SimulationInput):
 
         self.feedback_gains = dict()
         for lbl, vec in base_weights_info.items():
-            gain, _expression = sp.linear_eq_to_matrix(sp.Matrix([expression]), list(vec))
+            gain, _expression = linear_eq_to_matrix(sp.Matrix([expression]), list(vec))
             expression = (-1) * _expression
             self.feedback_gains.update({lbl: np.array(gain).astype(float)})
 
@@ -614,6 +614,18 @@ def evaluate_integrals(expression):
     return expr_expand
 
 
+def linear_eq_to_matrix(eq, syms):
+    """Makes it possible to call sympy.linear_eq_to_matrix
+    with sympy.Function's and not only sympy.Symbols's."""
+    dummies = sp.symbols(f"__dummy0:{len(syms)}")
+    assert len(dummies) == len(syms)
+    subs_list = [(s, d) for s, d in zip(syms, dummies)]
+    dummy_eq = eq.subs(subs_list)
+    mat, eq = sp.linear_eq_to_matrix(dummy_eq, dummies)
+    mat.simplify()
+    return mat, eq
+
+
 def derive_first_order_representation(expression, funcs, input_,
                                       mode="sympy.solve",
                                       interim_results=None):
@@ -633,12 +645,12 @@ def derive_first_order_representation(expression, funcs, input_,
     elif mode == "sympy.linear_eq_to_matrix":
         # rewrite expression as E1 * c' + E0 * c + G * u = 0
         print("\n>>> rewrite as E1 c' + E0 c + G u = 0")
-        E1, _expression = sp.linear_eq_to_matrix(expression,
+        E1, _expression = linear_eq_to_matrix(expression,
                                                  list(sp.diff(funcs, depvar)))
         expression = (-1) * _expression
-        E0, _expression = sp.linear_eq_to_matrix(expression, list(funcs))
+        E0, _expression = linear_eq_to_matrix(expression, list(funcs))
         expression = (-1) * _expression
-        G, _expression = sp.linear_eq_to_matrix(expression, list(input_))
+        G, _expression = linear_eq_to_matrix(expression, list(input_))
         assert _expression == _expression * 0
 
         # rewrite expression as c' = A c + B * u
@@ -662,14 +674,18 @@ def derive_first_order_representation(expression, funcs, input_,
                 "E1": E1, "E0": E0, "G": G, "A": A, "B": B,
             })
 
-        return A * funcs + B * input_
+        return sp.Add(sp.MatMul(A, funcs, evaluate=False), sp.MatMul(B, input_, evaluate=False), evaluate=False)
 
 
 def implement_as_linear_ode(rhs, funcs, input_):
 
-    A, _rhs = sp.linear_eq_to_matrix(rhs, list(funcs))
+    # evaluate matrix MatMul and Add
+    rhs = rhs.doit()
+
+    # parse matrices
+    A, _rhs = linear_eq_to_matrix(rhs, list(funcs))
     _rhs *= -1
-    B, _rhs = sp.linear_eq_to_matrix(_rhs, list(input_))
+    B, _rhs = linear_eq_to_matrix(_rhs, list(input_))
     assert _rhs == _rhs * 0
     assert len(A.atoms(sp.Symbol, sp.Function)) == 0
     assert len(B.atoms(sp.Symbol, sp.Function)) == 0
