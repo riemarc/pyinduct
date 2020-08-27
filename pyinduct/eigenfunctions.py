@@ -20,7 +20,8 @@ import sympy as sp
 from sympy.utilities.lambdify import lambdify, implemented_function
 
 from .core import (Domain, Base, Function, generic_scalar_product,
-                   normalize_base, find_roots, real)
+                   normalize_base, find_roots, real, get_base,
+                   ComposedFunctionVector)
 from .shapefunctions import ShapeFunction
 from .visualization import visualize_roots
 
@@ -1362,3 +1363,181 @@ class FiniteTransformFunction(Function):
                 elif j < 0 or j > 2 * self.n - 1:
                     raise ValueError
         return to_return
+
+
+def convert_to_real_valued_representation(
+    eig_vals, A=None, b=None, c=None, k=None, l=None, base_lbl=None):
+    r"""
+    Convert a complex valued modal observer approximation
+
+    .. math::
+
+        \dot{\hat{c}}(t) = \Lambda\hat c(t) + b u(t) + l \tilde y(t),
+        \quad  b, l\in \mathbb C^N, \quad \Lambda\in\mathbb C^{N\times N}
+
+    with output
+
+    .. math:: y(t) = c^T \hat c(t), \qquad c \in \mathbb C^N,
+
+    control law
+
+    .. math:: u(t) = k^T \hat c(t), \qquad k \in \mathbb C^N,
+
+    the corresponding complex valued approximation base
+    :math:`(\varphi_i)_{i=1,...,N}`
+    for the real valued approximation
+
+    .. math:: x(t) = \sum_{i=1}^N \hat c_i(t) \varphi_i \in L_2(\Omega, \mathbb R)
+
+    to a real valued representation
+
+    .. math::
+
+        \dot{\bar{c}}(t) = \bar\Lambda\bar c(t) + \bar b u(t) + \bar l\tilde y(t),
+        \quad  \bar c, \bar b, \bar l\in \mathbb R^N, \quad \bar \Lambda\in\mathbb R^{N\times N}
+
+    .. math:: y(t) = \bar c^T \bar c(t), \qquad \bar c \in \mathbb R^N,
+
+    .. math:: u(t) = \bar k^T \bar c(t), \qquad \bar k \in \mathbb R^N,
+
+    for the equivalent approximation
+
+    .. math:: x(t) = \sum_{i=1}^N \bar c_i(t) \bar \varphi_i \in L_2(\Omega, \mathbb R).
+
+    Note:
+      Only these kwargs has to be provided for which a result is desired. For
+      example: If kwarg *b* is not given, then for :math:`\bar b`
+      :code:`None` will be returned.
+
+    Args:
+        eig_vals (array_like): Eigenvalues :math:`\lambda_1,...,\lambda_N`.
+            It is assumed that complex conjugated pairs are sequentially
+            arranged.
+
+    Keyword Args:
+        A (array_like): :math:`\Lambda=\text{diag}(\lambda_1,...,\lambda_N)`
+        b (array_like): :math:`b`
+        c (array_like): :math:`c`
+        k (array_like): :math:`k`
+        l (array_like): :math:`l`
+        base_lbl (str): Base label of the approximation base.
+
+    Returns:
+        tuple: tuple(:math:`\bar \Lambda, \bar b, \bar c, \bar k, \bar l`),
+            approximation base as :py:class:`.Base`
+    """
+    eig_vals = sanitize_eigenvalues(eig_vals)
+    n = len(eig_vals)
+
+    if A is not None:
+        Ab = np.zeros((n, n), dtype=float)
+        i = 0
+        while i < n:
+            if np.imag(eig_vals[i]) != 0:
+                Ab[i,i] = np.real(eig_vals[i])
+                Ab[i,i+1] = -np.imag(eig_vals[i])
+                Ab[i+1,i] = np.imag(eig_vals[i])
+                Ab[i+1,i+1] = np.real(eig_vals[i])
+                i += 2
+            else:
+                # if not close numpy raises a warning
+                Ab[i,i] = np.real_if_close(eig_vals[i])
+                i += 1
+    else:
+        Ab = None
+
+    def realify_vect(v, p=0):
+        v = np.asarray(v, dtype=complex)
+        assert v.shape == (n, 1)
+        blb = np.zeros(v.shape, dtype=float)
+        i = 0
+        while i < n:
+            if np.imag(eig_vals[i]) != 0:
+                if not np.isclose(v[i], np.conj(v[i+1])):
+                    raise ValueError
+                blb[i] = 2 ** p * np.real(v[i])
+                blb[i+1] = (-2) ** p * np.imag(v[i])
+                i += 2
+            else:
+                # if not close numpy raises a warning
+                blb[i] = np.real_if_close(v[i])
+                i += 1
+        return blb
+
+    if b is not None:
+        bb = realify_vect(b, 0)
+    else:
+        bb = None
+    if l is not None:
+        lb = realify_vect(l, 0)
+    else:
+        lb = None
+
+    if c is not None:
+        cb = realify_vect(c, 1)
+    else:
+        cb = None
+    if k is not None:
+        kb = realify_vect(k, 1)
+    else:
+        kb = None
+
+    if base_lbl is not None:
+        real_base = list()
+        base = get_base(base_lbl)
+        if isinstance(base[0], ComposedFunctionVector):
+            z_test = np.array(base[0].members["funcs"][0].domain.copy().pop())
+        else:
+            z_test = np.array(base[0].domain.copy().pop())
+        i = 0
+        while i < n:
+            if np.imag(eig_vals[i]) != 0:
+                np.testing.assert_array_almost_equal(
+                    base[i](z_test), base[i+1].conj()(z_test))
+                real_base.append(base[i].scale(2).real())
+                real_base.append(base[i].scale(-2).imag())
+                i += 2
+            else:
+                real_base.append(base[i])
+                i += 1
+        appr_base_b = Base(real_base)
+    else:
+        appr_base_b = None
+
+    return (Ab, bb, cb, kb, lb), appr_base_b
+
+
+def sanitize_eigenvalues(eig_vals):
+    """
+    Return list of eigenvalues where all conjugate complex pairs have exactly
+    the same real part and absolute value of the imaginary part.
+
+    Args:
+        eig_vals (array_like): List of eigenvalues. It is assumed that complex
+            conjugated pairs are sequentially arranged.
+
+    Returns:
+        array_like: Sanitized list of eigenvalues.
+    """
+    eig_vals = np.asarray(eig_vals, dtype=complex).flatten()
+    ret = list()
+    i = 0
+    while i < len(eig_vals):
+        if np.isclose(np.imag(eig_vals[i]), 0):
+            ret.append(np.real(eig_vals[i]))
+            i += 1
+        else:
+            try:
+                eig_vals[i+1]
+            except IndexError:
+                raise ValueError("Complex conjugated eigen value missing in"
+                                 "the provided list of eigen values.")
+            if not np.isclose(eig_vals[i], np.conj(eig_vals[i+1])):
+                raise ValueError("It is assumed that complex conjugated pairs"
+                                 " are sequentially arranged and there norms"
+                                 " are close to each other.")
+            ret.append(eig_vals[i])
+            ret.append(np.conj(eig_vals[i]))
+            i += 2
+
+    return np.real_if_close(ret)

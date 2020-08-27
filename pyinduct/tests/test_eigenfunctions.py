@@ -1,9 +1,12 @@
 import unittest
 import numpy as np
+import sympy as sp
 
 import pyinduct as pi
 import pyinduct.parabolic as parabolic
 from pyinduct.tests import show_plots
+from pyinduct.eigenfunctions import convert_to_real_valued_representation, \
+    sanitize_eigenvalues
 
 import matplotlib.pyplot as plt
 
@@ -541,3 +544,129 @@ class IntermediateTransformationTest(unittest.TestCase):
             self.assertTrue(all(np.isclose(self.eig_base.fractions[i](test_vec),
                                            eig_funcs_i[i](test_vec) * np.exp(-a1 / 2 / a2 * test_vec))))
 
+
+class TestSanitizeEigVals(unittest.TestCase):
+    def setUp(self):
+        self.evs1 = [1, 2, 3, 2+1j, 2-1j+1e-9]
+        self.evs2 = [1, 2-3j, 2+3j, 2+1j, 2-1j+1e-9]
+        self.evs3 = [1+3j, 1-3j, 2, 2, 2-1j+1e-9, 2+1j]
+        self.evs_assert1 = [1+1j, 2-1j, 3, 2+1j, 2-1j+1e-9]
+        self.evs_assert2 = [1, 2-1j, 2+1.1j, 2+1j, 2-1j+1e-9]
+        self.evs_assert3 = [1+3j, 1-3j, 2, 2, 2-1j+1e-9]
+
+    def check_func(self, evs):
+        res = sanitize_eigenvalues(evs)
+        np.testing.assert_array_almost_equal(res, evs)
+
+    def test_func(self):
+        self.check_func(self.evs1)
+        self.check_func(self.evs2)
+        self.check_func(self.evs3)
+
+    def check_asserts(self, evs):
+        with self.assertRaises(ValueError):
+            sanitize_eigenvalues(evs)
+
+    def test_asserts(self):
+        self.check_asserts(self.evs_assert1)
+        self.check_asserts(self.evs_assert2)
+        self.check_asserts(self.evs_assert3)
+
+
+class TestConvertToRealRepresentation(unittest.TestCase):
+    def check_value_error(self, *args, **kwargs):
+        with self.assertRaises(ValueError):
+            convert_to_real_valued_representation(*args, **kwargs)
+
+    def test_matrices(self):
+        eig_vals = [2+3j, 2-3j]
+        eig_vals_sympy = sp.Matrix([2+3j, 2-3j])
+        A = [[2+3j, 0], [0, 2-3j]]
+        A_array = np.array([[2+3j, 0], [0, 2-3j]])
+        A_sympy = sp.Matrix([[2+3j, 0], [0, 2-3j]])
+        b = np.array([[1+1j], [1-1j]])
+        b_array = np.array([[1+1j], [1-1j]])
+        b_sympy = sp.Matrix([1+1j, 1-1j])
+        c = [[4-3j], [4+3j]]
+        c_sympy = sp.Matrix([[4-3j], [4+3j]])
+        c_assert = [[4-3j], [4]]
+        l = [[8-2j], [8+2j]]
+        l_assert = [[8-2j], [8-2j]]
+        k = [[4+5j], [4-5j]]
+
+        ret, _ = convert_to_real_valued_representation(
+            eig_vals, A=A, b=b, c=c, k=k, l=l)
+        ret2, _ = convert_to_real_valued_representation(
+            eig_vals, A=A_array, b=b_array, c=c, k=k, l=l)
+        ret3, _ = convert_to_real_valued_representation(
+            eig_vals_sympy, A=A_sympy, b=b_sympy, c=c_sympy, k=k, l=l)
+
+        for r, r2 in zip(ret, ret2):
+            if r is not None or r2 is not None:
+                np.testing.assert_array_almost_equal(r, r2)
+
+        for r, r3 in zip(ret, ret3):
+            if r is not None or r3 is not None:
+                np.testing.assert_array_almost_equal(r, r3)
+
+        Ar, br, cr, kr, lr = ret
+        ev = eig_vals[0]
+        np.testing.assert_array_almost_equal(Ar, [[np.real(ev), -np.imag(ev)],
+                                                  [np.imag(ev), np.real(ev)]])
+        np.testing.assert_array_almost_equal(br, [[float(np.real(b[0]))],
+                                                  [float(np.imag(b[0]))]])
+        np.testing.assert_array_almost_equal(lr, [[float(np.real(l[0]))],
+                                                  [float(np.imag(l[0]))]])
+        np.testing.assert_array_almost_equal(cr, [[2 * float(np.real(c[0]))],
+                                                  [-2 * float(np.imag(c[0]))]])
+        np.testing.assert_array_almost_equal(kr, [[2 * float(np.real(k[0]))],
+                                                  [-2 * float(np.imag(k[0]))]])
+
+        self.check_value_error(eig_vals, A=A, b=b, c=c_assert, k=k, l=l)
+        self.check_value_error(eig_vals, A=A, b=b, c=c, k=k, l=l_assert)
+
+    def test_base(self):
+        lam = 2 + 6j
+        eig_vals = [lam, np.conj(lam)]
+        z = sp.Symbol("z", real=True)
+        frac1 = sp.exp(eig_vals[0] * z)
+        frac2 = sp.exp(eig_vals[1] * z)
+        base = pi.Base([
+            pi.LambdifiedSympyExpression([frac1], z, (0, 4), complex_=True),
+            pi.LambdifiedSympyExpression([frac2], z, (0, 4), complex_=True),
+        ])
+        base_lbl = "approx_base"
+        pi.register_base(base_lbl, base)
+
+        z_vect = np.linspace(0, 4, 2)
+        weight = 8.3 + 14.11j
+        weights = np.array([weight, np.conj(weight)])
+        weights_ri =  np.array([np.real(weight), np.imag(weight)])
+
+        _, base_ri = convert_to_real_valued_representation(
+            eig_vals, base_lbl=base_lbl)
+
+        np.testing.assert_array_almost_equal(
+            pi.back_project_from_base(weights, base)(z_vect),
+            pi.back_project_from_base(weights_ri, base_ri)(z_vect))
+
+        base_assert = pi.Base([base[0], base[1].conj()])
+        pi.register_base("base_assert", base_assert)
+        with self.assertRaises(AssertionError):
+            convert_to_real_valued_representation(
+                eig_vals, base_lbl="base_assert")
+
+    def test_composed_func_vect(self):
+        lam = 2
+        eig_vals = [lam]
+        z = sp.Symbol("z", real=True)
+        frac1 = sp.exp(lam * z)
+        frac2 = sp.exp(lam * z)
+        base = pi.Base([pi.ComposedFunctionVector([
+            pi.LambdifiedSympyExpression([frac1], z, (0, 4), complex_=True),
+            pi.LambdifiedSympyExpression([frac2], z, (0, 4), complex_=True)
+        ], [1])])
+        base_lbl = "approx_base"
+        pi.register_base(base_lbl, base)
+
+        convert_to_real_valued_representation(eig_vals, base_lbl=base_lbl)
