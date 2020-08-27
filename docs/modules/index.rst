@@ -27,6 +27,7 @@ access any PyInduct module, or use this table of contents:
     visualization
     utils
     parabolic/index
+    hyperbolic/index
 
 Contributions to docs
 ---------------------
