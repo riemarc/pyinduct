@@ -474,18 +474,7 @@ def _dummify_comp_conj_imp_funcs(expr, unevaluated=True, evaluated=True):
             continue
 
         if isinstance(f._imp_, pi.Function):
-            derivative = f._imp_.derive(der_order)
-            if isinstance(derivative, pi.Function):
-                domain = derivative.domain
-                nonzero = derivative.nonzero
-            else:
-                domain = f._imp_.domain
-                nonzero = f._imp_.nonzero
-            conj_imp = pi.Function(
-                eval_handle=get_conj_compl_handle(derivative),
-                domain=domain,
-                nonzero=nonzero,
-            )
+            conj_imp = f._imp_.derive(der_order).conj()
 
         elif callable(f._imp_):
             if der_order > 0:
