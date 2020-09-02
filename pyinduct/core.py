@@ -8,6 +8,7 @@ import numpy as np
 import collections
 from copy import copy, deepcopy
 from numbers import Number
+from tqdm import tqdm
 
 from scipy import integrate
 from scipy.linalg import block_diag
@@ -2073,11 +2074,10 @@ def find_roots(function, grid, n_roots=None, rtol=1.e-5, atol=1.e-8,
     values = np.vstack([arr.flatten() for arr in grids]).T
 
     # iterate over test_values
-    val = iter(values)
     n_skip = 0
-    while True:
+    for val in tqdm(values):
         try:
-            res = root(function, next(val), tol=atol)
+            res = root(function, val, tol=atol)
         except (StopIteration, FloatingPointError) as excpt:
             if type(excpt) is StopIteration:
                 break
